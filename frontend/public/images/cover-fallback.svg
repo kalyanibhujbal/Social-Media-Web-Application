@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 360" role="img" aria-label="Abstract OpenVibe network artwork">
+  <defs><linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#dceaff"/><stop offset="1" stop-color="#d6efeb"/></linearGradient></defs>
+  <rect width="900" height="360" fill="url(#bg)"/>
+  <g fill="none" stroke="#6f95c9" stroke-opacity=".38" stroke-width="3"><path d="M110 250 280 120l160 115 180-130 170 125"/><path d="M280 120 320 280l300-175"/></g>
+  <g fill="#fff" stroke="#4d78b8" stroke-width="4"><circle cx="110" cy="250" r="19"/><circle cx="280" cy="120" r="19"/><circle cx="440" cy="235" r="19"/><circle cx="620" cy="105" r="19"/><circle cx="790" cy="230" r="19"/></g>
+</svg>

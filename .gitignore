@@ -1,0 +1,25 @@
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Python environments and generated files
+venv/
+.venv/
+**/.venv/
+**/.venv-*/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+*.egg-info/
+
+# Node dependencies and generated frontend output
+node_modules/
+frontend/dist/
+
+# Editor and operating-system files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
