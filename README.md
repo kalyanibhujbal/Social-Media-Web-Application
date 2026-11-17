@@ -64,11 +64,21 @@ Social Media/
 ## 🚀 Quick Start & How to Run
 
 ### 1. Backend Setup
+The backend is Python (FastAPI), not Node. Requires Python 3.10+.
+
 ```bash
 # Navigate to backend directory
 cd backend
 
-# Copy environment variables
+# Create and activate a virtual environment
+python -m venv .venv
+.venv\Scripts\activate        # Windows PowerShell
+# source .venv/bin/activate    # macOS / Linux
+
+# Install dependencies
+python -m pip install -r requirements.txt
+
+# Copy environment variables (Windows: copy .env.example .env)
 cp .env.example .env
 
 # Run unit tests
@@ -77,6 +87,8 @@ python -m unittest discover -s tests
 # Start FastAPI server
 python -m uvicorn main:app --reload --port 8000
 ```
+npm shortcuts also work inside `backend/` (they call the Python commands above): `npm install` installs Python dependencies, `npm run dev` starts the server, `npm test` runs the tests.
+
 Backend server starts at: `http://localhost:8000` (API Docs at `http://localhost:8000/docs`).
 
 ### 2. Frontend Setup
