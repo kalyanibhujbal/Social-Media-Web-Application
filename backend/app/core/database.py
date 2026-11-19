@@ -52,6 +52,26 @@ class DatabaseManager:
             await self.db["follows"].create_index([("follower_id", 1), ("following_id", 1)], unique=True, name="unique_follow_pair")
             await self.db["notifications"].create_index([("recipient_id", 1), ("created_at", -1)], name="notifications_by_recipient_date")
             await self.db["notifications"].create_index([("recipient_id", 1), ("is_read", 1)], name="notifications_by_read_state")
+            await self.db["notifications"].create_index(
+                [("recipient_id", 1), ("is_read", 1), ("section", 1)],
+                name="notifications_by_section_unread",
+            )
+            await self.db["notifications"].create_index(
+                [("recipient_id", 1), ("resource_id", 1)],
+                unique=True,
+                partialFilterExpression={"kind": "NETWORK_POST"},
+                name="unique_network_post_notification",
+            )
+            for kind, keys in (
+                ("NETWORK_ARTICLE", [("recipient_id", 1), ("resource_id", 1), ("kind", 1)]),
+                ("NETWORK_EVENT", [("recipient_id", 1), ("kind", 1), ("resource_id", 1)]),
+            ):
+                await self.db["notifications"].create_index(
+                    keys,
+                    unique=True,
+                    partialFilterExpression={"kind": kind},
+                    name=f"unique_{kind.lower()}_notification",
+                )
             await self.db["conversations"].create_index("pair_key", unique=True, name="unique_direct_conversation")
             await self.db["messages"].create_index([("conversation_id", 1), ("created_at", 1)], name="messages_by_conversation_date")
             await self.db["post_likes"].create_index([("post_id", 1), ("user_id", 1)], unique=True, name="unique_post_like")

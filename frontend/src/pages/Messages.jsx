@@ -2,6 +2,7 @@ import React, { useCallback, useContext, useEffect, useState } from 'react';
 import { AuthContext } from '../context/AuthContext';
 import { api } from '../services/api';
 import { Avatar } from '../components/common/Avatar';
+import { SectionNotifications } from '../components/common/SectionNotifications';
 import { AlertCircle, LoaderCircle, MessageSquareText, RefreshCw, Search, Send } from 'lucide-react';
 
 const displayName = (person) => person?.full_name || person?.username || 'OpenVibe member';
@@ -39,6 +40,24 @@ export const Messages = ({ setActivePage }) => {
 
   useEffect(() => { load(); }, [load]);
 
+  useEffect(() => {
+    if (!user) return undefined;
+    let active = true;
+    const refreshConversations = async () => {
+      try {
+        const items = await api.getConversations();
+        if (active) setConversations(items);
+      } catch (err) {
+        if (active) setError(err.message || 'Unread message counts could not be refreshed.');
+      }
+    };
+    const timer = window.setInterval(refreshConversations, 30000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [user]);
+
   const openConversation = useCallback(async (id) => {
     if (!id) return;
     setSelectedId(id);
@@ -48,10 +67,19 @@ export const Messages = ({ setActivePage }) => {
       setConversation(result);
       await api.markConversationRead(id);
       setConversations((items) => items.map((item) => item.id === id ? { ...item, unread_count: 0 } : item));
+      window.dispatchEvent(new CustomEvent('openvibe:notifications-updated'));
     } catch (err) { setError(err.message || 'This conversation could not be opened.'); }
   }, []);
 
   useEffect(() => { if (selectedId) openConversation(selectedId); }, [selectedId, openConversation]);
+
+  useEffect(() => {
+    const handleOpenConversation = (event) => {
+      if (event.detail?.conversationId) openConversation(event.detail.conversationId);
+    };
+    window.addEventListener('openvibe:open-conversation', handleOpenConversation);
+    return () => window.removeEventListener('openvibe:open-conversation', handleOpenConversation);
+  }, [openConversation]);
 
   const startWith = async (memberId) => {
     setError('');
@@ -87,15 +115,17 @@ export const Messages = ({ setActivePage }) => {
 
   const visible = conversations.filter((item) => displayName(item.other_user).toLowerCase().includes(query.toLowerCase()) || item.other_user?.username?.toLowerCase().includes(query.toLowerCase()));
   const current = conversation?.id === selectedId ? conversation : null;
+  const unreadTotal = conversations.reduce((total, item) => total + (item.unread_count || 0), 0);
 
   return (
     <main id="main-content" className="container page-shell">
-      <header className="page-heading"><div><span className="eyebrow">PRIVATE CONVERSATIONS</span><h1>Messages</h1><p>Text conversations with your accepted connections.</p></div><button className="btn btn-secondary btn-sm" type="button" onClick={load} disabled={loading}><RefreshCw size={15} /> Refresh inbox</button></header>
+      <header className="page-heading"><div><span className="eyebrow">PRIVATE CONVERSATIONS</span><h1>Messages</h1><p>{unreadTotal ? `${unreadTotal} unread messages · ` : ''}Text conversations with your accepted connections.</p></div><button className="btn btn-secondary btn-sm" type="button" onClick={load} disabled={loading}><RefreshCw size={15} /> Refresh inbox</button></header>
       {error && <div className="notice-card notice-card-error" role="alert"><AlertCircle size={17} />{error}</div>}
+      <SectionNotifications section="messages" title="Unread message alerts" setActivePage={setActivePage} />
       <section className="messages-shell card" aria-label="Messages">
         <aside className="conversation-list" aria-label="Conversation list">
           <div className="conversation-list-heading"><h2>Inbox</h2><label className="conversation-search"><Search size={16} aria-hidden="true" /><input type="search" placeholder="Search conversations" aria-label="Search conversations" value={query} onChange={(event) => setQuery(event.target.value)} /></label></div>
-          {loading ? <div className="loading-state" role="status"><LoaderCircle className="spin" size={17} /> Loading inbox…</div> : visible.length ? <ul className="conversation-items">{visible.map((item) => <li key={item.id}><button type="button" className={`conversation-item ${selectedId === item.id ? 'active' : ''}`} onClick={() => openConversation(item.id)}><Avatar name={displayName(item.other_user)} size="md" /><span className="conversation-item-copy"><strong>{displayName(item.other_user)}</strong><small>{item.last_message || 'Conversation started'}</small></span><span className="conversation-item-meta">{item.unread_count > 0 && <span className="count-pill">{item.unread_count}</span>}<time>{formatTime(item.last_message_at)}</time></span></button></li>)}</ul> : <div className="conversation-list-empty"><MessageSquareText size={21} /><strong>No conversations</strong><span>Start a conversation with an accepted connection.</span></div>}
+          {loading ? <div className="loading-state" role="status"><LoaderCircle className="spin" size={17} /> Loading inbox…</div> : visible.length ? <ul className="conversation-items">{visible.map((item) => <li key={item.id}><button type="button" className={`conversation-item ${selectedId === item.id ? 'active' : ''} ${item.unread_count > 0 ? 'unread' : ''}`} onClick={() => openConversation(item.id)}><Avatar name={displayName(item.other_user)} size="md" /><span className="conversation-item-copy"><strong>{displayName(item.other_user)}</strong><small>{item.last_message || 'Conversation started'}</small></span><span className="conversation-item-meta">{item.unread_count > 0 && <span className="count-pill">{item.unread_count}</span>}<time>{formatTime(item.last_message_at)}</time></span></button></li>)}</ul> : <div className="conversation-list-empty"><MessageSquareText size={21} /><strong>No conversations</strong><span>Start a conversation with an accepted connection.</span></div>}
           {connections.length > 0 && <div className="message-start-list"><h3>Start a conversation</h3>{connections.map((member) => <button type="button" key={member.id} onClick={() => startWith(member.id)}><Avatar name={displayName(member)} size="sm" /><span>{displayName(member)}</span></button>)}</div>}
         </aside>
         <div className="conversation-panel">

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { AuthProvider } from './context/AuthContext';
 import { ConsentProvider } from './context/ConsentContext';
+import { NotificationCountProvider } from './context/NotificationCountContext';
 import { Navbar } from './components/common/Navbar';
 import { Footer } from './components/common/Footer';
 import { CookieBanner } from './components/common/CookieBanner';
@@ -45,17 +46,17 @@ export function App() {
       case 'home':
         return <Home setActivePage={setActivePage} searchQuery={searchQuery} onSearch={setSearchQuery} onOpenProfile={openProfile} onOpenOwnProfile={openOwnProfile} onOpenArticle={openArticle} />;
       case 'explore':
-        return <Explore onOpenProfile={openProfile} onOpenArticle={openArticle} />;
+        return <Explore setActivePage={setActivePage} onOpenProfile={openProfile} onOpenArticle={openArticle} />;
       case 'events':
-        return <Events onOpenProfile={openProfile} onOpenArticle={openArticle} onCreateEvent={() => openComposerFormat('event')} />;
+        return <Events setActivePage={setActivePage} onOpenProfile={openProfile} onOpenArticle={openArticle} onCreateEvent={() => openComposerFormat('event')} />;
       case 'articles':
-        return <Articles onOpenProfile={openProfile} onOpenArticle={openArticle} onCreateArticle={() => openComposerFormat('article')} />;
+        return <Articles setActivePage={setActivePage} onOpenProfile={openProfile} onOpenArticle={openArticle} onCreateArticle={() => openComposerFormat('article')} />;
       case 'article':
         return <ArticleReader key={selectedArticle?.id} article={selectedArticle} onBack={() => setActivePage('articles')} onOpenProfile={openProfile} onArticleUpdated={setSelectedArticle} onArticleDeleted={() => { setSelectedArticle(null); setActivePage('articles'); }} />;
       case 'network':
         return <MyNetwork setActivePage={setActivePage} onOpenProfile={openProfile} />;
       case 'notifications':
-        return <Notifications setActivePage={setActivePage} />;
+        return <Notifications setActivePage={setActivePage} onOpenArticle={openArticle} />;
       case 'messages':
         return <Messages setActivePage={setActivePage} />;
       case 'profile':
@@ -90,22 +91,24 @@ export function App() {
 
   return (
     <AuthProvider>
-      <ConsentProvider>
-        <div className="app-shell">
-          <Navbar
-            activePage={activePage}
-            setActivePage={setActivePage}
-            searchQuery={searchQuery}
-            onSearch={(query) => { setSearchQuery(query); setActivePage('home'); }}
-            onOpenProfile={openProfile}
-            onOpenOwnProfile={openOwnProfile}
-          />
-          <div className="app-content">{renderPage()}</div>
-          <Footer setActivePage={setActivePage} />
-          <MobileNavigation activePage={activePage} setActivePage={(page) => { if (page === 'profile') openOwnProfile(); else setActivePage(page); }} />
-          <CookieBanner />
-        </div>
-      </ConsentProvider>
+      <NotificationCountProvider>
+        <ConsentProvider>
+          <div className="app-shell">
+            <Navbar
+              activePage={activePage}
+              setActivePage={setActivePage}
+              searchQuery={searchQuery}
+              onSearch={(query) => { setSearchQuery(query); setActivePage('home'); }}
+              onOpenProfile={openProfile}
+              onOpenOwnProfile={openOwnProfile}
+            />
+            <div className="app-content">{renderPage()}</div>
+            <Footer setActivePage={setActivePage} />
+            <MobileNavigation activePage={activePage} setActivePage={(page) => { if (page === 'profile') openOwnProfile(); else setActivePage(page); }} />
+            <CookieBanner />
+          </div>
+        </ConsentProvider>
+      </NotificationCountProvider>
     </AuthProvider>
   );
 }

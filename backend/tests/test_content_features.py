@@ -285,6 +285,69 @@ class TestRichContentFeatures(unittest.TestCase):
         self.assertEqual(client.get("/api/v1/posts?content_type=EVENT").json()[0]["id"], event_response.json()["id"])
         self.assertEqual(client.get("/api/v1/posts?content_type=ARTICLE").json()[0]["id"], article["id"])
 
+    def test_owner_can_edit_caption_and_media_without_losing_engagement(self):
+        prediction_patch, xai_patch, moderation_patch, audit_patch, notification_patch = self._mock_text_moderation()
+        with prediction_patch, xai_patch, moderation_patch, audit_patch, notification_patch:
+            created = client.post(
+                "/api/v1/posts/media",
+                headers=self._headers(),
+                data={"caption": "Original caption"},
+                files=[
+                    ("files", ("keep.jpg", JPEG, "image/jpeg")),
+                    ("files", ("remove.mp4", MP4, "video/mp4")),
+                ],
+            )
+        self.assertEqual(created.status_code, 201, created.text)
+        post = created.json()
+        db_manager._collections["post_likes"].append({"post_id": post["id"], "user_id": self.other["id"]})
+        db_manager._collections["comments"].append({"id": "preserved-comment", "post_id": post["id"], "content": "Existing comment"})
+
+        denied = client.put(
+            f"/api/v1/posts/{post['id']}",
+            headers=self._headers(self.other),
+            data={"caption": "Not the owner"},
+        )
+        self.assertEqual(denied.status_code, 403)
+
+        prediction_patch, xai_patch, moderation_patch, audit_patch, notification_patch = self._mock_text_moderation()
+        with prediction_patch as predict, xai_patch, moderation_patch, audit_patch, notification_patch:
+            updated = client.put(
+                f"/api/v1/posts/{post['id']}",
+                headers=self._headers(),
+                data={"caption": "Updated caption", "remove_media": post["media"][1]["filename"]},
+                files=[
+                    ("files", ("added.png", b"\x89PNG\r\n\x1a\n" + b"\x00" * 24, "image/png")),
+                    ("files", ("added.webm", WEBM, "video/webm")),
+                ],
+            )
+
+        self.assertEqual(updated.status_code, 200, updated.text)
+        result = updated.json()
+        self.assertEqual(result["content"], "Updated caption")
+        self.assertTrue(result["is_edited"])
+        self.assertIsNotNone(result["edited_at"])
+        self.assertEqual([item["media_type"] for item in result["media"]], ["image", "image", "video"])
+        self.assertEqual(predict.call_count, 1)
+        self.assertEqual(predict.call_args.args[0], "Updated caption")
+        self.assertEqual(len(db_manager._collections["post_likes"]), 1)
+        self.assertEqual(db_manager._collections["comments"][0]["id"], "preserved-comment")
+        self.assertFalse(Path(self.media_dir.name, post["media"][1]["filename"]).exists())
+        self.assertEqual(len(list(Path(self.media_dir.name).iterdir())), 3)
+
+    def test_post_detail_endpoint_obeys_account_privacy(self):
+        private_owner = self._seed_user("private-post-owner", is_private=True)
+        prediction_patch, xai_patch, moderation_patch, audit_patch, notification_patch = self._mock_text_moderation()
+        with prediction_patch, xai_patch, moderation_patch, audit_patch, notification_patch:
+            created = client.post(
+                "/api/v1/posts",
+                headers=self._headers(private_owner),
+                json={"content": "Private content"},
+            )
+        self.assertEqual(created.status_code, 201, created.text)
+        post_id = created.json()["id"]
+        self.assertEqual(client.get(f"/api/v1/posts/{post_id}", headers=self._headers(self.other)).status_code, 404)
+        self.assertEqual(client.get(f"/api/v1/posts/{post_id}", headers=self._headers(private_owner)).status_code, 200)
+
     def test_long_article_checks_all_text_chunks_and_uses_highest_severity(self):
         hate_prediction = _prediction()
         hate_prediction.update({

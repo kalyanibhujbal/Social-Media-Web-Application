@@ -6,6 +6,7 @@ import { ModerationSandbox } from '../components/posts/ModerationSandbox';
 import { Avatar } from '../components/common/Avatar';
 import { BrandImage } from '../components/common/BrandImage';
 import { PostCard } from '../components/posts/PostCard';
+import { SectionNotifications } from '../components/common/SectionNotifications';
 import { api } from '../services/api';
 import {
   Activity, ArrowRight, Bookmark, BookOpen, CalendarDays, Compass, FileText, LockKeyhole,
@@ -101,6 +102,8 @@ export const Home = ({ setActivePage, searchQuery = '', onSearch, onOpenProfile,
               <button type="button" onClick={() => setActivePage('login')}>Sign in to start a post…</button>
             </section>
           )}
+
+          <SectionNotifications section="home" title="Updates from your network" setActivePage={setActivePage} onOpenArticle={onOpenArticle} />
 
           {user && searchQuery.trim().length >= 2 ? <section className="search-results" aria-label="Search results">
             <div className="section-heading-row"><div><span className="eyebrow">SEARCH</span><h2>Results for “{searchQuery.trim()}”</h2></div><button className="text-link-button" type="button" onClick={() => onSearch?.('')}>Clear search</button></div>

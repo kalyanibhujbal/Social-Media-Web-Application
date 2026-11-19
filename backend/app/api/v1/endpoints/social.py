@@ -20,7 +20,11 @@ from app.schemas.social import (
 )
 from app.schemas.post import PostResponse
 from app.services.audit_logger import audit_logger
-from app.services.notifications import create_notification
+from app.services.notifications import (
+    create_notification,
+    notification_kinds_for_section,
+    notification_section,
+)
 from app.services.sanitizer import InputSanitizer
 from app.services.social_access import can_view_profile_content, visible_author_ids
 
@@ -37,16 +41,16 @@ async def _find_one(collection: str, mongo_query: dict, memory_predicate):
     return next((row for row in db_manager._collections.get(collection, []) if memory_predicate(row)), None)
 
 
-async def _find_many(collection: str, mongo_query: dict, memory_predicate, *, sort_key: str | None = None, reverse: bool = False, limit: int = 100):
+async def _find_many(collection: str, mongo_query: dict, memory_predicate, *, sort_key: str | None = None, reverse: bool = False, limit: int = 100, offset: int = 0):
     if db_manager.use_mongo and db_manager.db is not None:
         cursor = db_manager.db[collection].find(mongo_query)
         if sort_key:
             cursor = cursor.sort(sort_key, -1 if reverse else 1)
-        return await cursor.limit(limit).to_list(length=limit)
+        return await cursor.skip(offset).limit(limit).to_list(length=limit)
     rows = [row for row in db_manager._collections.get(collection, []) if memory_predicate(row)]
     if sort_key:
         rows.sort(key=lambda row: str(row.get(sort_key) or ""), reverse=reverse)
-    return rows[:limit]
+    return rows[offset:offset + limit]
 
 
 async def _count(collection: str, mongo_query: dict, memory_predicate) -> int:
@@ -55,8 +59,55 @@ async def _count(collection: str, mongo_query: dict, memory_predicate) -> int:
     return sum(1 for row in db_manager._collections.get(collection, []) if memory_predicate(row))
 
 
+async def _unread_notification_counts(user_id: str) -> dict[str, int]:
+    counts = {
+        "home": 0,
+        "explore": 0,
+        "network": 0,
+        "messages": 0,
+        "events": 0,
+        "articles": 0,
+        "notifications": 0,
+    }
+    if db_manager.use_mongo and db_manager.db is not None:
+        rows = await db_manager.db["notifications"].aggregate([
+            {"$match": {"recipient_id": user_id, "is_read": False}},
+            {"$group": {
+                "_id": {"section": "$section", "kind": "$kind"},
+                "count": {"$sum": 1},
+            }},
+        ]).to_list(length=None)
+        for row in rows:
+            identity = row.get("_id") or {}
+            section = identity.get("section") or notification_section(identity.get("kind") or "")
+            counts[section] = counts.get(section, 0) + row.get("count", 0)
+        return counts
+
+    for row in db_manager._collections.get("notifications", []):
+        if row.get("recipient_id") == user_id and not row.get("is_read", False):
+            section = row.get("section") or notification_section(row.get("kind") or "")
+            counts[section] = counts.get(section, 0) + 1
+    return counts
+
+
 async def _get_user(user_id: str):
     return await _find_one("users", {"id": user_id}, lambda row: row.get("id") == user_id)
+
+
+async def _mark_request_notifications_read(recipient_id: str, resource_id: str, kind: str) -> None:
+    now = _now()
+    query = {"recipient_id": recipient_id, "resource_id": resource_id, "kind": kind, "is_read": False}
+    if db_manager.use_mongo and db_manager.db is not None:
+        await db_manager.db["notifications"].update_many(query, {"$set": {"is_read": True, "read_at": now}})
+        return
+    for row in db_manager._collections["notifications"]:
+        if (
+            row.get("recipient_id") == recipient_id
+            and row.get("resource_id") == resource_id
+            and row.get("kind") == kind
+            and not row.get("is_read", False)
+        ):
+            row.update({"is_read": True, "read_at": now})
 
 
 def _public_user(user: dict, *, include_profile_content: bool = True) -> dict[str, Any]:
@@ -277,6 +328,7 @@ async def accept_connection(connection_id: str, request: Request, current_user: 
         await db_manager.db["connections"].update_one({"id": connection_id, "recipient_id": current_user["id"], "status": "PENDING"}, {"$set": {"status": "ACCEPTED", "updated_at": row["updated_at"]}})
     requester = await _get_user(row["requester_id"])
     await create_notification(row["requester_id"], "CONNECTION_ACCEPTED", current_user["id"], current_user["username"], "connection", connection_id)
+    await _mark_request_notifications_read(current_user["id"], connection_id, "CONNECTION_REQUEST")
     await audit_logger.log_event(current_user["id"], current_user["role"], "CONNECTION_ACCEPTED", "A connection request was accepted.", connection_id)
     return {"status": "ACCEPTED", "other_user": await _profile(requester, current_user["id"]) if requester else None}
 
@@ -289,6 +341,8 @@ async def reject_connection(connection_id: str, current_user: dict = Depends(get
     row.update({"status": "REJECTED", "updated_at": _now()})
     if db_manager.use_mongo and db_manager.db is not None:
         await db_manager.db["connections"].update_one({"id": connection_id, "recipient_id": current_user["id"], "status": "PENDING"}, {"$set": {"status": "REJECTED", "updated_at": row["updated_at"]}})
+    await create_notification(row["requester_id"], "CONNECTION_REJECTED", current_user["id"], current_user["username"], "connection", connection_id)
+    await _mark_request_notifications_read(current_user["id"], connection_id, "CONNECTION_REQUEST")
     await audit_logger.log_event(current_user["id"], current_user["role"], "CONNECTION_REJECTED", "A connection request was declined.", connection_id)
     return {"status": "REJECTED"}
 
@@ -414,6 +468,7 @@ async def accept_follow_request(follower_id: str, current_user: dict = Depends(g
             {"$set": {"status": "ACCEPTED", "updated_at": now}},
         )
     await create_notification(follower_id, "FOLLOW_ACCEPTED", me, current_user["username"], "user", me)
+    await _mark_request_notifications_read(me, follower_id, "FOLLOW_REQUEST")
     await audit_logger.log_event(me, current_user["role"], "FOLLOW_REQUEST_ACCEPTED", "A follow request was accepted.", row["id"])
     count = await _count("follows", {"following_id": me, "$or": [{"status": "ACCEPTED"}, {"status": {"$exists": False}}]}, lambda item: item.get("following_id") == me and item.get("status", "ACCEPTED") == "ACCEPTED")
     return {"status": "ACCEPTED", "following": True, "follower_count": count}
@@ -436,6 +491,8 @@ async def reject_follow_request(follower_id: str, current_user: dict = Depends(g
             {"id": row["id"], "follower_id": follower_id, "following_id": me, "status": "PENDING"},
             {"$set": {"status": "REJECTED", "updated_at": now}},
         )
+    await create_notification(follower_id, "FOLLOW_REJECTED", me, current_user["username"], "user", me)
+    await _mark_request_notifications_read(me, follower_id, "FOLLOW_REQUEST")
     await audit_logger.log_event(me, current_user["role"], "FOLLOW_REQUEST_REJECTED", "A follow request was rejected.", row["id"])
     return {"status": "REJECTED"}
 
@@ -475,15 +532,169 @@ async def get_my_follows(current_user: dict = Depends(get_current_user)):
 @router.get("/notifications")
 async def list_notifications(
     request: Request,
-    limit: int = Query(50, ge=1, le=100),
+    limit: int = Query(30, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    section: str | None = Query(None, pattern="^(home|explore|network|messages|events|articles|notifications)$"),
     current_user: dict = Depends(get_current_user),
 ):
     client_ip = request.client.host if request.client else "unknown"
     rate_limit_check(client_ip, max_requests=60, window_seconds=60)
     user_id = current_user["id"]
-    rows = await _find_many("notifications", {"recipient_id": user_id}, lambda row: row.get("recipient_id") == user_id, sort_key="created_at", reverse=True, limit=limit)
-    unread = await _count("notifications", {"recipient_id": user_id, "is_read": False}, lambda row: row.get("recipient_id") == user_id and not row.get("is_read", False))
-    return {"notifications": [NotificationResponse(**row) for row in rows], "unread_count": unread}
+    query = {"recipient_id": user_id}
+    predicate = lambda row: row.get("recipient_id") == user_id
+    if section:
+        kinds = notification_kinds_for_section(section)
+        query = {
+            "recipient_id": user_id,
+            "$or": [
+                {"section": section},
+                {"section": {"$exists": False}, "kind": {"$in": list(kinds)}},
+            ],
+        }
+        predicate = lambda row: (
+            row.get("recipient_id") == user_id
+            and (
+                row.get("section") == section
+                or (not row.get("section") and notification_section(row.get("kind") or "") in {section})
+            )
+        )
+    rows = await _find_many(
+        "notifications",
+        query,
+        predicate,
+        sort_key="created_at",
+        reverse=True,
+        limit=limit + 1,
+        offset=offset,
+    )
+    has_more = len(rows) > limit
+    page_rows = rows[:limit]
+    actor_ids = {row.get("actor_id") for row in page_rows if row.get("actor_id")}
+    post_ids = {
+        row.get("resource_id")
+        for row in page_rows
+        if row.get("kind") in {"NETWORK_POST", "NETWORK_ARTICLE", "NETWORK_EVENT"} and row.get("resource_id")
+    }
+    connection_ids = {
+        row.get("resource_id")
+        for row in page_rows
+        if row.get("resource_type") == "connection" and row.get("resource_id")
+    }
+    follow_pairs = set()
+    for row in page_rows:
+        if row.get("resource_type") != "user" or not row.get("actor_id"):
+            continue
+        if row.get("kind") in {"FOLLOW_ACCEPTED", "FOLLOW_REJECTED"}:
+            follow_pairs.add((user_id, row["actor_id"]))
+        else:
+            follow_pairs.add((row["actor_id"], user_id))
+
+    post_rows = await _find_many(
+        "posts",
+        {"id": {"$in": list(post_ids)}},
+        lambda item: item.get("id") in post_ids,
+        limit=max(1, len(post_ids)),
+    ) if post_ids else []
+    related_user_ids = actor_ids | {row.get("author_id") for row in post_rows if row.get("author_id")}
+    users = await _find_many(
+        "users",
+        {"id": {"$in": list(related_user_ids)}},
+        lambda item: item.get("id") in related_user_ids,
+        limit=max(1, len(related_user_ids)),
+    ) if related_user_ids else []
+    users_by_id = {row["id"]: row for row in users if row.get("id")}
+    private_user_ids = {
+        user_row["id"] for user_row in users
+        if user_row.get("id") and user_row.get("is_private", False)
+    }
+    follow_pairs.update((user_id, private_id) for private_id in private_user_ids)
+    if follow_pairs:
+        follow_query = {
+            "$or": [{"follower_id": follower, "following_id": following} for follower, following in follow_pairs]
+        }
+        follow_rows = await _find_many(
+            "follows",
+            follow_query,
+            lambda item: (item.get("follower_id"), item.get("following_id")) in follow_pairs,
+            limit=max(1, len(follow_pairs)),
+        )
+    else:
+        follow_rows = []
+    follows_by_pair = {
+        (row.get("follower_id"), row.get("following_id")): row
+        for row in follow_rows
+        if row.get("follower_id") and row.get("following_id")
+    }
+    connections = await _find_many(
+        "connections",
+        {"id": {"$in": list(connection_ids)}},
+        lambda item: item.get("id") in connection_ids,
+        limit=max(1, len(connection_ids)),
+    ) if connection_ids else []
+    connections_by_id = {row["id"]: row for row in connections if row.get("id")}
+
+    def profile_visible(profile: dict | None) -> bool:
+        if not profile or not profile.get("is_active", True):
+            return False
+        if not profile.get("is_private", False) or profile.get("id") == user_id:
+            return True
+        follow = follows_by_pair.get((user_id, profile["id"]))
+        return bool(follow and follow.get("status", "ACCEPTED") == "ACCEPTED")
+
+    notifications = []
+    for row in page_rows:
+        notification = dict(row)
+        actor = users_by_id.get(notification.get("actor_id"))
+        if actor:
+            notification["actor_username"] = actor.get("username") or notification.get("actor_username")
+            notification["actor_full_name"] = actor.get("full_name")
+            if profile_visible(actor):
+                notification["actor_avatar_url"] = actor.get("avatar_url")
+
+        if notification.get("kind") in {"NETWORK_POST", "NETWORK_ARTICLE", "NETWORK_EVENT"}:
+            post = next((item for item in post_rows if item.get("id") == notification.get("resource_id")), None)
+            post_author = users_by_id.get(post.get("author_id")) if post else None
+            if (
+                not post
+                or post.get("moderation_status") != "APPROVED"
+                or not profile_visible(post_author)
+            ):
+                continue
+            preview = (
+                (post.get("article") or {}).get("title")
+                if notification.get("kind") == "NETWORK_ARTICLE"
+                else (post.get("event") or {}).get("title")
+                if notification.get("kind") == "NETWORK_EVENT"
+                else post.get("content")
+            ) or post.get("content") or ""
+            notification["post_preview"] = preview[:180]
+
+        if notification.get("resource_type") == "connection":
+            connection = connections_by_id.get(notification.get("resource_id"))
+            if connection:
+                notification["resource_status"] = connection.get("status")
+        elif notification.get("resource_type") == "user":
+            if notification.get("kind") in {"FOLLOW_ACCEPTED", "FOLLOW_REJECTED"}:
+                pair = (user_id, notification.get("actor_id"))
+            else:
+                pair = (notification.get("actor_id"), user_id)
+            follow = follows_by_pair.get(pair)
+            if follow:
+                notification["resource_status"] = follow.get("status", "ACCEPTED")
+
+        notification["section"] = notification.get("section") or notification_section(notification.get("kind") or "")
+        notifications.append(NotificationResponse(**notification))
+
+    unread_by_section = await _unread_notification_counts(user_id)
+    unread = sum(unread_by_section.values())
+    return {
+        "notifications": notifications,
+        "unread_count": unread,
+        "unread_by_section": unread_by_section,
+        "section_unread_count": unread_by_section.get(section, 0) if section else None,
+        "has_more": has_more,
+        "next_offset": offset + len(page_rows),
+    }
 
 
 @router.patch("/notifications/{notification_id}/read")
@@ -493,9 +704,39 @@ async def mark_notification_read(notification_id: str, current_user: dict = Depe
     row = await _find_one("notifications", {"id": notification_id, "recipient_id": user_id}, lambda item: item.get("id") == notification_id and item.get("recipient_id") == user_id)
     if not row:
         raise HTTPException(status_code=404, detail="Notification not found.")
-    row.update({"is_read": True, "read_at": now})
-    if db_manager.use_mongo and db_manager.db is not None:
+    if row.get("kind") == "MESSAGE" and row.get("resource_type") == "conversation" and row.get("resource_id"):
+        conversation_id = row["resource_id"]
+        if db_manager.use_mongo and db_manager.db is not None:
+            await db_manager.db["messages"].update_many(
+                {"conversation_id": conversation_id, "recipient_id": user_id, "is_read": False},
+                {"$set": {"is_read": True, "read_at": now}},
+            )
+            await db_manager.db["notifications"].update_many(
+                {
+                    "recipient_id": user_id,
+                    "kind": "MESSAGE",
+                    "resource_type": "conversation",
+                    "resource_id": conversation_id,
+                    "is_read": False,
+                },
+                {"$set": {"is_read": True, "read_at": now}},
+            )
+        else:
+            for message in db_manager._collections["messages"]:
+                if message.get("conversation_id") == conversation_id and message.get("recipient_id") == user_id:
+                    message.update({"is_read": True, "read_at": now})
+            for notification in db_manager._collections["notifications"]:
+                if (
+                    notification.get("recipient_id") == user_id
+                    and notification.get("kind") == "MESSAGE"
+                    and notification.get("resource_type") == "conversation"
+                    and notification.get("resource_id") == conversation_id
+                ):
+                    notification.update({"is_read": True, "read_at": now})
+    elif db_manager.use_mongo and db_manager.db is not None:
         await db_manager.db["notifications"].update_one({"id": notification_id, "recipient_id": user_id}, {"$set": {"is_read": True, "read_at": now}})
+    else:
+        row.update({"is_read": True, "read_at": now})
     return {"status": "READ"}
 
 
@@ -505,9 +746,16 @@ async def mark_all_notifications_read(current_user: dict = Depends(get_current_u
     now = _now()
     if db_manager.use_mongo and db_manager.db is not None:
         await db_manager.db["notifications"].update_many({"recipient_id": user_id, "is_read": False}, {"$set": {"is_read": True, "read_at": now}})
+        await db_manager.db["messages"].update_many(
+            {"recipient_id": user_id, "is_read": False},
+            {"$set": {"is_read": True, "read_at": now}},
+        )
     else:
         for row in db_manager._collections["notifications"]:
-            if row.get("recipient_id") == user_id:
+            if row.get("recipient_id") == user_id and not row.get("is_read", False):
+                row.update({"is_read": True, "read_at": now})
+        for row in db_manager._collections["messages"]:
+            if row.get("recipient_id") == user_id and not row.get("is_read", False):
                 row.update({"is_read": True, "read_at": now})
     return {"status": "READ"}
 
@@ -624,9 +872,28 @@ async def mark_conversation_read(conversation_id: str, current_user: dict = Depe
     now = _now()
     if db_manager.use_mongo and db_manager.db is not None:
         await db_manager.db["messages"].update_many({"conversation_id": conversation_id, "recipient_id": me, "is_read": False}, {"$set": {"is_read": True, "read_at": now}})
+        await db_manager.db["notifications"].update_many(
+            {
+                "recipient_id": me,
+                "kind": "MESSAGE",
+                "resource_type": "conversation",
+                "resource_id": conversation_id,
+                "is_read": False,
+            },
+            {"$set": {"is_read": True, "read_at": now}},
+        )
     else:
         for row in db_manager._collections["messages"]:
-            if row.get("conversation_id") == conversation_id and row.get("recipient_id") == me:
+            if row.get("conversation_id") == conversation_id and row.get("recipient_id") == me and not row.get("is_read", False):
+                row.update({"is_read": True, "read_at": now})
+        for row in db_manager._collections["notifications"]:
+            if (
+                row.get("recipient_id") == me
+                and row.get("kind") == "MESSAGE"
+                and row.get("resource_type") == "conversation"
+                and row.get("resource_id") == conversation_id
+                and not row.get("is_read", False)
+            ):
                 row.update({"is_read": True, "read_at": now})
     return {"status": "READ"}
 

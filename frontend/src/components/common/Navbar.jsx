@@ -1,5 +1,6 @@
 import React, { useContext, useEffect, useState } from 'react';
 import { AuthContext } from '../../context/AuthContext';
+import { NotificationCountContext } from '../../context/NotificationCountContext';
 import { OpenVibeLogo } from './OpenVibeLogo';
 import { api } from '../../services/api';
 import {
@@ -20,6 +21,7 @@ const PRIMARY_LINKS = [
 
 export const Navbar = ({ activePage, setActivePage, searchQuery = '', onSearch, onOpenProfile, onOpenOwnProfile }) => {
   const { user, logout } = useContext(AuthContext);
+  const { total: unreadCount, sections: unreadBySection, error: notificationCountError } = useContext(NotificationCountContext);
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [query, setQuery] = useState(searchQuery);
   const [searchFocused, setSearchFocused] = useState(false);
@@ -27,7 +29,6 @@ export const Navbar = ({ activePage, setActivePage, searchQuery = '', onSearch, 
   const [peopleResults, setPeopleResults] = useState([]);
   const [searchingPeople, setSearchingPeople] = useState(false);
   const [peopleSearchError, setPeopleSearchError] = useState('');
-  const [unreadCount, setUnreadCount] = useState(0);
 
   useEffect(() => setQuery(searchQuery), [searchQuery]);
 
@@ -47,17 +48,6 @@ export const Navbar = ({ activePage, setActivePage, searchQuery = '', onSearch, 
     }, 250);
     return () => { active = false; window.clearTimeout(timer); };
   }, [query, user, searchFocused]);
-
-  useEffect(() => {
-    if (!user) { setUnreadCount(0); return undefined; }
-    let active = true;
-    const refresh = () => api.getNotifications().then((result) => { if (active) setUnreadCount(result.unread_count); }).catch(() => {});
-    refresh();
-    const timer = window.setInterval(refresh, 60000);
-    const handleUpdate = (event) => { if (Number.isInteger(event.detail?.unreadCount)) setUnreadCount(event.detail.unreadCount); else refresh(); };
-    window.addEventListener('openvibe:notifications-updated', handleUpdate);
-    return () => { active = false; window.clearInterval(timer); window.removeEventListener('openvibe:notifications-updated', handleUpdate); };
-  }, [user]);
 
   const go = (page) => {
     setActivePage(page);
@@ -113,27 +103,30 @@ export const Navbar = ({ activePage, setActivePage, searchQuery = '', onSearch, 
         </div>
 
         <div className="mobile-top-actions" aria-label="Quick navigation">
-          <button type="button" onClick={() => go('notifications')} aria-label="Notifications"><Bell size={20} /></button>
+          <button type="button" onClick={() => go('notifications')} aria-label={unreadCount ? `Notifications, ${unreadCount} unread` : 'Notifications'} title={notificationCountError || undefined}><Bell size={20} />{unreadCount > 0 && <span className="mobile-top-badge">{unreadCount > 99 ? '99+' : unreadCount}</span>}</button>
+          <button type="button" onClick={() => go('messages')} aria-label={unreadBySection.messages ? `Messages, ${unreadBySection.messages} unread` : 'Messages'}><MessageSquare size={20} />{unreadBySection.messages > 0 && <span className="mobile-top-badge">{unreadBySection.messages > 99 ? '99+' : unreadBySection.messages}</span>}</button>
           <button type="button" onClick={() => go(user ? 'profile' : 'login')} aria-label={user ? 'Profile' : 'Sign in'}><UserRound size={20} /></button>
         </div>
 
         <nav className="desktop-navigation" aria-label="Main navigation">
           <ul className="nav-links">
-            {PRIMARY_LINKS.map(({ key, label, Icon }) => (
+            {PRIMARY_LINKS.map(({ key, label, Icon }) => {
+              const sectionCount = key === 'notifications' ? unreadCount : (unreadBySection[key] || 0);
+              return (
               <li key={key} className="nav-item">
                 <button
                   type="button"
                   className={`nav-tab ${activePage === key || (key === 'articles' && activePage === 'article') ? 'active' : ''}`}
                   onClick={() => go(key)}
                   aria-current={activePage === key || (key === 'articles' && activePage === 'article') ? 'page' : undefined}
-                  aria-label={key === 'notifications' && unreadCount > 0 ? `${label}, ${unreadCount} unread` : label}
-                  title={key === 'messages' ? 'Messaging preview' : undefined}
+                  aria-label={sectionCount > 0 ? `${label}, ${sectionCount} unread` : label}
+                  title={key === 'notifications' ? notificationCountError || 'All notifications' : undefined}
                 >
                   <Icon size={19} strokeWidth={1.9} aria-hidden="true" />
-                  <span>{label}{key === 'notifications' && unreadCount > 0 && <span className="nav-unread-count">{unreadCount > 99 ? '99+' : unreadCount}</span>}</span>
+                  <span>{label}{sectionCount > 0 && <span className="nav-unread-count">{sectionCount > 99 ? '99+' : sectionCount}</span>}</span>
                 </button>
               </li>
-            ))}
+            );})}
             {user && <li className="nav-item">
               <button type="button" className={`nav-tab ${activePage === 'dashboard' ? 'active' : ''}`} onClick={() => go('dashboard')} aria-current={activePage === 'dashboard' ? 'page' : undefined}>
                 <BarChart3 size={19} strokeWidth={1.9} aria-hidden="true" /><span>Insights</span>

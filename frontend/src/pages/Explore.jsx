@@ -1,8 +1,9 @@
 import React from 'react';
 import { Compass, Globe2 } from 'lucide-react';
 import { PostFeed } from '../components/posts/PostFeed';
+import { SectionNotifications } from '../components/common/SectionNotifications';
 
-export const Explore = ({ onOpenProfile, onOpenArticle }) => (
+export const Explore = ({ setActivePage, onOpenProfile, onOpenArticle }) => (
   <main id="main-content" className="container page-shell">
     <header className="page-heading">
       <div>
@@ -16,6 +17,7 @@ export const Explore = ({ onOpenProfile, onOpenArticle }) => (
       <Globe2 size={17} aria-hidden="true" />
       <p>Explore includes approved posts from public accounts. Private-account posts are never shown here.</p>
     </div>
+    <SectionNotifications section="explore" title="Discovery updates" setActivePage={setActivePage} onOpenArticle={onOpenArticle} />
     <PostFeed explore onOpenProfile={onOpenProfile} onOpenArticle={onOpenArticle} />
   </main>
 );

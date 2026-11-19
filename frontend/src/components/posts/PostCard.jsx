@@ -1,4 +1,4 @@
-import React, { useContext, useEffect, useState } from 'react';
+import React, { useContext, useEffect, useRef, useState } from 'react';
 import { AuthContext } from '../../context/AuthContext';
 import { api } from '../../services/api';
 import { ModerationBadge } from '../moderation/ModerationBadge';
@@ -8,7 +8,7 @@ import { Avatar } from '../common/Avatar';
 import {
   ThumbsUp, MessageSquare, Share2, Bookmark, CircleHelp, AlertCircle,
   ShieldCheck, Trash2, CalendarDays, MapPin, BookOpen,
-  ChevronLeft, ChevronRight, Expand, X,
+  ChevronLeft, ChevronRight, Expand, X, MoreHorizontal, Pencil, ImagePlus, Video, LoaderCircle,
 } from 'lucide-react';
 
 const formatDate = (value) => {
@@ -16,8 +16,9 @@ const formatDate = (value) => {
   return Number.isNaN(date.getTime()) ? 'Date unavailable' : new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(date);
 };
 
-export const PostCard = ({ post, onSavedStateChange, onOpenProfile, onOpenArticle }) => {
+export const PostCard = ({ post: initialPost, onSavedStateChange, onOpenProfile, onOpenArticle, onPostUpdated }) => {
   const { user } = useContext(AuthContext);
+  const [post, setPost] = useState(initialPost);
   const [showExplanation, setShowExplanation] = useState(false);
   const [showComments, setShowComments] = useState(false);
   const [appealReason, setAppealReason] = useState('');
@@ -38,6 +39,16 @@ export const PostCard = ({ post, onSavedStateChange, onOpenProfile, onOpenArticl
   const [lightboxIndex, setLightboxIndex] = useState(null);
   const isLightboxOpen = lightboxIndex !== null;
   const [articleExpanded, setArticleExpanded] = useState(false);
+  const [showPostMenu, setShowPostMenu] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editCaption, setEditCaption] = useState(initialPost.content || '');
+  const [editFiles, setEditFiles] = useState([]);
+  const [editPreviewUrls, setEditPreviewUrls] = useState([]);
+  const editPreviewUrlsRef = useRef(new Set());
+  const [editRemoveMedia, setEditRemoveMedia] = useState([]);
+  const [editBusy, setEditBusy] = useState(false);
+  const [editError, setEditError] = useState('');
+  const [editSuccess, setEditSuccess] = useState('');
 
   const prediction = post.ai_prediction;
   const isOwner = user && user.id === post.author_id;
@@ -69,6 +80,10 @@ export const PostCard = ({ post, onSavedStateChange, onOpenProfile, onOpenArticl
     document.body.style.overflow = 'hidden';
     return () => { document.body.style.overflow = previousOverflow; };
   }, [isLightboxOpen]);
+
+  useEffect(() => () => {
+    editPreviewUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
+  }, []);
 
   const submitAppeal = async (event) => {
     event.preventDefault();
@@ -152,24 +167,152 @@ export const PostCard = ({ post, onSavedStateChange, onOpenProfile, onOpenArticl
     }
   };
 
+  const beginEditing = () => {
+    setEditCaption(post.content || '');
+    editPreviewUrls.forEach(revokeEditPreview);
+    setEditPreviewUrls([]);
+    setEditFiles([]);
+    setEditRemoveMedia([]);
+    setEditError('');
+    setEditSuccess('');
+    setActionError('');
+    setShowPostMenu(false);
+    setIsEditing(true);
+  };
+
+  const cancelEditing = () => {
+    setIsEditing(false);
+    editPreviewUrls.forEach(revokeEditPreview);
+    setEditPreviewUrls([]);
+    setEditFiles([]);
+    setEditRemoveMedia([]);
+    setEditError('');
+  };
+
+  const revokeEditPreview = (url) => {
+    URL.revokeObjectURL(url);
+    editPreviewUrlsRef.current.delete(url);
+  };
+
+  const addEditFiles = (event) => {
+    const selected = Array.from(event.target.files || []);
+    event.target.value = '';
+    const availableMedia = mediaItems.filter((item) => !editRemoveMedia.includes(item.filename));
+    const videoCount = availableMedia.filter((item) => item.media_type === 'video').length
+      + editFiles.filter((file) => file.type.startsWith('video/')).length
+      + selected.filter((file) => file.type.startsWith('video/')).length;
+    const imageCount = availableMedia.filter((item) => item.media_type === 'image').length
+      + editFiles.filter((file) => file.type.startsWith('image/')).length
+      + selected.filter((file) => file.type.startsWith('image/')).length;
+    if (videoCount > 1 || imageCount > 4 || videoCount + imageCount > 5) {
+      setEditError('A post can include up to four images and one video.');
+      return;
+    }
+    setEditError('');
+    const newUrls = selected.map((file) => {
+      const url = URL.createObjectURL(file);
+      editPreviewUrlsRef.current.add(url);
+      return url;
+    });
+    setEditPreviewUrls((urls) => [...urls, ...newUrls]);
+    setEditFiles((files) => [...files, ...selected]);
+  };
+
+  const saveEditedPost = async (event) => {
+    event.preventDefault();
+    if (editBusy) return;
+    setEditBusy(true);
+    setEditError('');
+    setEditSuccess('');
+    try {
+      const updatedPost = await api.updatePost(post.id, {
+        caption: editCaption,
+        files: editFiles,
+        removeMedia: editRemoveMedia,
+      });
+      setPost(updatedPost);
+      setMediaItems(updatedPost.media || []);
+      onPostUpdated?.(updatedPost);
+      setIsEditing(false);
+      editPreviewUrls.forEach(revokeEditPreview);
+      setEditPreviewUrls([]);
+      setEditFiles([]);
+      setEditRemoveMedia([]);
+      setEditSuccess('Post updated.');
+    } catch (error) {
+      setEditError(error.message || 'This post could not be updated.');
+    } finally {
+      setEditBusy(false);
+    }
+  };
+
   if (deleted) return null;
 
   return (
-    <article id={`post-${post.id}`} className="post-card" aria-label={`Post by ${post.author_full_name || post.author_username}`}>
+    <article id={`post-${post.id}`} className={`post-card ${isEditing ? 'post-card-editing' : ''}`} aria-label={`Post by ${post.author_full_name || post.author_username}`}>
       <header className="post-header">
         <div className="post-author">
           <Avatar name={post.author_full_name || post.author_username || 'OpenVibe member'} src={post.author_avatar_url} size="lg" />
           <div>
             {onOpenProfile ? <button type="button" className="post-author-name post-author-profile-link" onClick={() => onOpenProfile(post.author_id)}>{post.author_full_name || post.author_username || 'OpenVibe member'}</button> : <div className="post-author-name">{post.author_full_name || post.author_username || 'OpenVibe member'}</div>}
             <div className="post-author-headline">{post.author_full_name ? `@${post.author_username}` : 'OpenVibe community member'}</div>
-            <div className="post-timestamp"><time dateTime={post.created_at}>{formatDate(post.created_at)}</time>{post.language && <> · {post.language.toUpperCase()}</>}{post.language_supported === false && <span className="language-review-note" title={post.language_notice || 'The configured model is not verified for this language.'}> · language routed for review</span>}</div>
+            <div className="post-timestamp"><time dateTime={post.created_at}>{formatDate(post.created_at)}</time>{post.is_edited && <span className="post-edited-indicator"> · Edited</span>}{post.language && <> · {post.language.toUpperCase()}</>}{post.language_supported === false && <span className="language-review-note" title={post.language_notice || 'The configured model is not verified for this language.'}> · language routed for review</span>}</div>
           </div>
         </div>
         <div className="post-header-actions">
           {showReviewStatus && <ModerationBadge prediction={prediction} status={post.moderation_status} />}
-          {isOwner && <button type="button" className="btn btn-quiet btn-icon post-delete-button" disabled={deleteBusy} onClick={deleteOwnPost} aria-label={`Delete ${post.content_type?.toLowerCase() || 'post'}`} title="Delete your post and media"><Trash2 size={16} /></button>}
+          {isOwner && <div className="post-menu-wrap">
+            <button type="button" className="btn btn-quiet btn-icon post-menu-button" onClick={() => setShowPostMenu((shown) => !shown)} aria-label="Post options" aria-expanded={showPostMenu}><MoreHorizontal size={19} /></button>
+            {showPostMenu && <div className="post-menu" role="menu">
+              {post.content_type === 'POST' && <button type="button" role="menuitem" onClick={beginEditing}><Pencil size={15} /> Edit post</button>}
+              <button type="button" role="menuitem" disabled={deleteBusy} onClick={deleteOwnPost}><Trash2 size={15} /> Delete post</button>
+            </div>}
+          </div>}
         </div>
       </header>
+
+      {isEditing && <form className="post-edit-form" onSubmit={saveEditedPost}>
+        <label className="form-label" htmlFor={`edit-caption-${post.id}`}>Caption</label>
+        <textarea id={`edit-caption-${post.id}`} className="form-textarea" rows="4" maxLength={2000} value={editCaption} onChange={(event) => setEditCaption(event.target.value)} />
+        <div className="post-edit-attachments">
+          <span className="form-label">Attach media</span>
+          <div className="post-edit-attachment-actions">
+            <button type="button" className="btn btn-outline btn-sm" onClick={() => document.getElementById(`edit-images-${post.id}`)?.click()}><ImagePlus size={15} /> Add images</button>
+            <button type="button" className="btn btn-outline btn-sm" onClick={() => document.getElementById(`edit-video-${post.id}`)?.click()}><Video size={15} /> Add video</button>
+          </div>
+          <input id={`edit-images-${post.id}`} type="file" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp" multiple hidden onChange={addEditFiles} />
+          <input id={`edit-video-${post.id}`} type="file" accept=".mp4,.webm,video/mp4,video/webm" hidden onChange={addEditFiles} />
+        </div>
+        {(mediaItems.length > 0 || editFiles.length > 0) && <div className="post-edit-preview-grid" aria-label="Edit media preview">
+          {mediaItems.map((item) => {
+            const removed = editRemoveMedia.includes(item.filename);
+            return <div className={`post-edit-preview-item ${removed ? 'removed' : ''}`} key={item.filename}>
+              {item.media_type === 'video'
+                ? <video src={api.mediaUrl(item.url)} controls playsInline preload="metadata" crossOrigin="use-credentials" />
+                : <img src={api.mediaUrl(item.url)} alt="Existing post media" crossOrigin="use-credentials" />}
+              <button type="button" className="post-edit-remove" onClick={() => setEditRemoveMedia((items) => removed ? items.filter((name) => name !== item.filename) : [...items, item.filename])} aria-label={removed ? 'Keep this media' : 'Remove this media'} title={removed ? 'Keep this media' : 'Remove this media'}>{removed ? 'Keep' : <X size={15} />}</button>
+              {removed && <span className="post-edit-removed-label">Will be removed</span>}
+            </div>;
+          })}
+          {editFiles.map((file, index) => <div className="post-edit-preview-item" key={`${file.name}-${index}`}>
+            {file.type.startsWith('video/')
+              ? <video src={editPreviewUrls[index]} controls playsInline />
+              : <img src={editPreviewUrls[index]} alt={`New media preview ${index + 1}`} />}
+            <button type="button" className="post-edit-remove" onClick={() => {
+              revokeEditPreview(editPreviewUrls[index]);
+              setEditFiles((items) => items.filter((_, fileIndex) => fileIndex !== index));
+              setEditPreviewUrls((urls) => urls.filter((_, fileIndex) => fileIndex !== index));
+            }} aria-label={`Remove selected file ${file.name}`}><X size={15} /></button>
+          </div>)}
+        </div>}
+        {editError && <div className="notice-card notice-card-error" role="alert"><AlertCircle size={16} />{editError}</div>}
+        <div className="post-edit-form-actions">
+          <span className="post-edit-moderation-note">Updated caption text is checked before it is saved. Media is not analyzed.</span>
+          <div><button type="button" className="btn btn-quiet btn-sm" onClick={cancelEditing} disabled={editBusy}>Cancel</button><button type="submit" className="btn btn-primary btn-sm" disabled={editBusy}>{editBusy && <LoaderCircle className="spin" size={15} />}{editBusy ? 'Saving…' : 'Save changes'}</button></div>
+        </div>
+      </form>}
+
+      {editSuccess && <div className="notice-card notice-card-success" role="status">{editSuccess}</div>}
 
       {mediaItems.length > 0 && <div className={`post-media-gallery ${mediaItems.length > 1 ? 'post-media-multiple' : ''}`} aria-label="Post media">
         {visibleMedia.map((item, index) => <div className={`post-media-item ${item.media_type === 'video' ? 'post-video-item' : ''}`} key={item.filename}>

@@ -26,6 +26,14 @@ Base path: `/api/v1`. API responses use `Cache-Control: no-store`. Browser auth 
 
 Moderation is text-only: captions, event titles/descriptions, and article titles/body text are moderated; long article text is processed in bounded text chunks through the existing classifier, with the highest-severity chunk driving the result. Uploaded image and video bytes are stored and served separately and are never passed to the AI model. Media-only posts have no AI prediction.
 
+## Notifications and messaging
+
+* `GET /notifications?section=home|network|messages|explore|events|articles|notifications&offset=0&limit=30` returns the signed-in user's paginated notifications, total `unread_count`, and `unread_by_section` counts. Omitting `section` returns the global notification history; supported sections include Home post activity, Network requests, Messages, Explore discovery, Events, and Articles.
+* `PATCH /notifications/{notification_id}/read` and `POST /notifications/read-all` update only the current user's notifications. Reading a message notification also clears unread state for its conversation messages.
+* `GET /messages/conversations`, `POST /messages/conversations`, `POST /messages/conversations/{conversation_id}/messages`, and `PATCH /messages/conversations/{conversation_id}/read` are authenticated; conversation access requires an accepted connection.
+
+Connection posts, articles, and events generate deduplicated network notifications. Notification records contain a section, actor/resource references, read status, and timestamp rather than copies of private post content; content visibility is checked when post notifications are returned. Explore recommendation alerts and event invitation/reminder alerts have no generating service in the current application.
+
 ## Privacy — `/privacy`
 
 * `GET /contact`: only configured public contact fields; unfilled placeholders are omitted.

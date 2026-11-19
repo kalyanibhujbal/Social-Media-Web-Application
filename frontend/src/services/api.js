@@ -190,6 +190,23 @@ export const api = {
     return uploadForm(`/posts/${encodeURIComponent(postId)}/article`, formData, onProgress, 'PUT');
   },
 
+  updatePost: async (postId, { caption, files = [], removeMedia = [] }) => {
+    const formData = new FormData();
+    formData.append('caption', caption);
+    files.forEach((file) => formData.append('files', file));
+    removeMedia.forEach((filename) => formData.append('remove_media', filename));
+    return uploadForm(`/posts/${encodeURIComponent(postId)}`, formData, null, 'PUT');
+  },
+
+  getPost: async (postId) => {
+    const res = await fetch(`${API_BASE_URL}/posts/${encodeURIComponent(postId)}`, { credentials: 'include', headers: getHeaders() });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(getErrorMessage(err.detail, 'Could not open this post.'));
+    }
+    return res.json();
+  },
+
   deletePost: async (postId) => {
     const res = await fetch(`${API_BASE_URL}/posts/${encodeURIComponent(postId)}`, {
       method: 'DELETE', credentials: 'include', headers: getHeaders(),
@@ -406,8 +423,10 @@ export const api = {
     return res.json();
   },
 
-  getNotifications: async () => {
-    const res = await fetch(`${API_BASE_URL}/notifications`, { credentials: 'include', headers: getHeaders() });
+  getNotifications: async (offset = 0, limit = 30, section = null) => {
+    const params = new URLSearchParams({ offset: String(offset), limit: String(limit) });
+    if (section) params.set('section', section);
+    const res = await fetch(`${API_BASE_URL}/notifications?${params}`, { credentials: 'include', headers: getHeaders() });
     if (!res.ok) throw new Error('Could not load notifications');
     return res.json();
   },

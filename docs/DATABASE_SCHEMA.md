@@ -14,6 +14,10 @@ Each post stores an application UUID, author UUID and username, text content, la
 
 Stores content UUID/type, AI label, confidence, moderation recommendation/action, timestamp, and optional minimal manual-review event (reviewer UUID/role/action/time). It does not store review notes. A sparse unique index protects `content_id` where present.
 
+## `notifications`
+
+Stores notification UUID, recipient and optional actor IDs, kind, section, optional resource type/ID, read status, and timestamp. Notifications are recipient-scoped; post previews are hydrated from currently authorized posts when read through the API rather than copied into the notification document. Message notifications reference a conversation and are synchronized with the corresponding message read state.
+
 ## `audit_logs`
 
 Stores audit UUID, actor reference/role, event type, optional resource reference, a short generic detail, and timestamp. Application cleanup purges rows beyond configured retention. Account deletion anonymizes the actor reference and clears owned content references.
@@ -28,4 +32,4 @@ Stores request UUID, account UUID, request type, optional user description, `OPE
 
 ## Indexes and retention
 
-Connection setup creates unique `users.email`, `users.username`; author/date indexes for posts and comments; a sparse unique `moderation_logs.content_id`; and timestamp/user indexes for audit, consent, and privacy requests. The application retention loop purges old audit events and resolved privacy requests daily. See [Privacy Data Map](PRIVACY_DATA_MAP.md) for the active retention defaults and other storage details.
+Connection setup creates unique `users.email`, `users.username`; author/date indexes for posts and comments; a sparse unique `moderation_logs.content_id`; recipient/date, recipient/read-state, and recipient/section/read-state indexes for notifications; deduplication indexes for network post/article/event notifications; and timestamp/user indexes for audit, consent, and privacy requests. The application retention loop purges old audit events and resolved privacy requests daily. See [Privacy Data Map](PRIVACY_DATA_MAP.md) for the active retention defaults and other storage details.

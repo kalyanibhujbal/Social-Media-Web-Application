@@ -15,7 +15,7 @@ from app.services.moderation_engine import moderation_engine
 from app.services.audit_logger import audit_logger
 from app.core.database import db_manager
 from app.middleware.rate_limit import rate_limit_check
-from app.services.notifications import create_notification
+from app.services.notifications import create_notification, content_notification_section
 from app.services.social_access import can_view_post
 
 router = APIRouter()
@@ -154,11 +154,13 @@ async def create_comment(
             actor_id=current_user["id"], actor_username=current_user["username"],
             resource_type="comment" if parent_comment else "post",
             resource_id=comment_in.parent_comment_id or comment_in.post_id,
+            section=content_notification_section(parent_post.get("content_type")),
         )
     else:
         await create_notification(
             recipient_id=current_user["id"], kind="MODERATION_RESULT",
             resource_type="comment", resource_id=comment_id,
+            section=content_notification_section(parent_post.get("content_type")),
         )
 
     return CommentResponse(**comment_doc)
@@ -260,6 +262,7 @@ async def like_comment(
             recipient_id=comment.get("author_id"), kind="COMMENT_LIKE",
             actor_id=current_user["id"], actor_username=current_user["username"],
             resource_type="comment", resource_id=comment_id,
+            section=content_notification_section(post.get("content_type")),
         )
     return {"liked": True, "like_count": like_count}
 

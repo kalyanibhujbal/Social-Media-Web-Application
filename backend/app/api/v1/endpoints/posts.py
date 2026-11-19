@@ -17,7 +17,7 @@ from app.services.moderation_engine import moderation_engine
 from app.services.audit_logger import audit_logger
 from app.core.database import db_manager
 from app.middleware.rate_limit import rate_limit_check
-from app.services.notifications import create_notification
+from app.services.notifications import create_notification, content_notification_section
 from app.services.social_access import can_view_post, visible_author_ids
 from app.services.media_storage import (
     IMAGE_LIMIT,
@@ -135,6 +135,92 @@ def _build_post(
     }
 
 
+async def _notify_network_of_post(post_doc: dict) -> None:
+    content_type = post_doc.get("content_type", "POST")
+    notification_kind = {
+        "POST": "NETWORK_POST",
+        "ARTICLE": "NETWORK_ARTICLE",
+        "EVENT": "NETWORK_EVENT",
+    }.get(content_type)
+    if not notification_kind or post_doc.get("moderation_status") != "APPROVED":
+        return
+    author_id = post_doc["author_id"]
+    if db_manager.use_mongo and db_manager.db is not None:
+        author = await db_manager.db["users"].find_one(
+            {"id": author_id, "is_active": {"$ne": False}},
+            {"id": 1, "is_private": 1},
+        )
+        if not author:
+            return
+        connections = await db_manager.db["connections"].find(
+            {"status": "ACCEPTED", "$or": [{"requester_id": author_id}, {"recipient_id": author_id}]},
+            {"requester_id": 1, "recipient_id": 1},
+        ).to_list(length=None)
+        follows = []
+        if author.get("is_private", False):
+            follows = await db_manager.db["follows"].find(
+                {
+                    "following_id": author_id,
+                    "$or": [{"status": "ACCEPTED"}, {"status": {"$exists": False}}],
+                },
+                {"follower_id": 1},
+            ).to_list(length=None)
+        recipients = {
+            row["recipient_id"] if row["requester_id"] == author_id else row["requester_id"]
+            for row in connections
+        }
+        if author.get("is_private", False):
+            recipients.intersection_update(row["follower_id"] for row in follows if row.get("follower_id"))
+        if recipients:
+            active_users = await db_manager.db["users"].find(
+                {"id": {"$in": list(recipients)}, "is_active": {"$ne": False}},
+                {"id": 1},
+            ).to_list(length=None)
+            recipients = {row["id"] for row in active_users if row.get("id")}
+    else:
+        author = next(
+            (
+                row for row in db_manager._collections.get("users", [])
+                if row.get("id") == author_id and row.get("is_active", True)
+            ),
+            None,
+        )
+        if not author:
+            return
+        connections = [
+            row for row in db_manager._collections.get("connections", [])
+            if row.get("status") == "ACCEPTED" and author_id in {row.get("requester_id"), row.get("recipient_id")}
+        ]
+        follows = []
+        if author.get("is_private", False):
+            follows = [
+                row for row in db_manager._collections.get("follows", [])
+                if row.get("following_id") == author_id and row.get("status", "ACCEPTED") == "ACCEPTED"
+            ]
+        recipients = {
+            row["recipient_id"] if row["requester_id"] == author_id else row["requester_id"]
+            for row in connections
+        }
+        if author.get("is_private", False):
+            recipients.intersection_update(row["follower_id"] for row in follows if row.get("follower_id"))
+        active_users = {
+            row["id"] for row in db_manager._collections.get("users", [])
+            if row.get("id") in recipients and row.get("is_active", True)
+        }
+        recipients = active_users
+
+    for recipient_id in recipients:
+        await create_notification(
+            recipient_id=recipient_id,
+            kind=notification_kind,
+            actor_id=author_id,
+            actor_username=post_doc.get("author_username"),
+            resource_type="post",
+            resource_id=post_doc["id"],
+            deduplicate=True,
+        )
+
+
 async def _save_post(post_doc: dict, current_user: dict) -> None:
     if db_manager.use_mongo and db_manager.db is not None:
         await db_manager.db["posts"].insert_one(post_doc)
@@ -179,7 +265,10 @@ async def _save_post(post_doc: dict, current_user: dict) -> None:
             kind="MODERATION_RESULT",
             resource_type="post",
             resource_id=post_doc["id"],
+            section=content_notification_section(content_type),
         )
+    else:
+        await _notify_network_of_post(post_doc)
 
 
 async def _get_post(post_id: str) -> dict | None:
@@ -506,6 +595,7 @@ async def update_article(
             kind="MODERATION_RESULT",
             resource_type="post",
             resource_id=post_id,
+            section="articles",
         )
     return (await _post_responses([post], current_user))[0]
 
@@ -535,6 +625,143 @@ async def delete_post_media(
     removed = [item for item in media_items if item.get("filename") == filename]
     delete_media_files(removed)
     return {"status": "DELETED"}
+
+
+@router.put("/{post_id}", response_model=PostResponse)
+async def update_post(
+    post_id: str,
+    request: Request,
+    caption: str = Form(""),
+    files: list[UploadFile] | None = File(None),
+    remove_media: list[str] | None = Form(None),
+    current_user: dict = Depends(get_current_user),
+):
+    client_ip = request.client.host if request.client else "unknown"
+    rate_limit_check(client_ip, max_requests=10, window_seconds=60)
+    if len(caption) > 2000:
+        raise HTTPException(status_code=400, detail="Captions cannot exceed 2,000 characters.")
+    post = await _get_post(post_id)
+    if not post:
+        raise HTTPException(status_code=404, detail="Post not found.")
+    if post.get("author_id") != current_user["id"]:
+        raise HTTPException(status_code=403, detail="You can only edit your own posts.")
+    if post.get("content_type", "POST") != "POST":
+        raise HTTPException(status_code=400, detail="Only posts can be edited here.")
+
+    previous_media = list(post.get("media", []))
+    remove_names = set(remove_media or [])
+    existing_names = {item.get("filename") for item in previous_media}
+    if not remove_names.issubset(existing_names):
+        raise HTTPException(status_code=404, detail="One or more media files were not found.")
+    retained_media = [item for item in previous_media if item.get("filename") not in remove_names]
+    removed_media = [item for item in previous_media if item.get("filename") in remove_names]
+    uploads = files or []
+    new_video_count = sum(Path(upload.filename or "").suffix.lower() in {".mp4", ".webm"} for upload in uploads)
+    retained_video_count = sum(item.get("media_type") == "video" for item in retained_media)
+    retained_image_count = sum(item.get("media_type") == "image" for item in retained_media)
+    if len(retained_media) + len(uploads) > 5:
+        raise HTTPException(status_code=400, detail="A post can contain no more than five media files.")
+    if retained_video_count + new_video_count > 1:
+        raise HTTPException(status_code=400, detail="A post can contain only one video.")
+    if retained_image_count + len(uploads) - new_video_count > 4:
+        raise HTTPException(status_code=400, detail="A post can contain up to four images.")
+    if not caption.strip() and not retained_media and not uploads:
+        raise HTTPException(status_code=400, detail="A post must include text or media.")
+
+    new_media: list[dict] = []
+    saved = False
+    try:
+        for upload in uploads:
+            new_media.append(await store_upload(upload))
+        media_items = retained_media + new_media
+        moderation = _moderate_text(caption)
+        now = datetime.now(timezone.utc).isoformat()
+        updates = {
+            "content": moderation["content"],
+            "media": media_items,
+            "language": moderation["language"],
+            "language_supported": moderation["language_supported"],
+            "language_notice": moderation["language_notice"],
+            "moderation_recommendation": moderation["moderation_recommendation"],
+            "moderation_status": moderation["moderation_status"],
+            "moderation_explanation": moderation["moderation_explanation"],
+            "ai_prediction": moderation["ai_prediction"],
+            "updated_at": now,
+            "edited_at": now,
+            "is_edited": True,
+        }
+        if db_manager.use_mongo and db_manager.db is not None:
+            result = await db_manager.db["posts"].update_one(
+                {"id": post_id, "author_id": current_user["id"], "content_type": {"$in": ["POST", None]}},
+                {"$set": updates},
+            )
+            if not result.matched_count:
+                raise HTTPException(status_code=404, detail="Post not found.")
+            post.update(updates)
+            saved = True
+            if moderation["ai_prediction"]:
+                await db_manager.db["moderation_logs"].update_one(
+                    {"content_id": post_id},
+                    {"$set": {
+                        "post_id": post_id,
+                        "content_id": post_id,
+                        "content_type": "post",
+                        "detected_language": moderation["language"],
+                        "ai_label": moderation["ai_prediction"]["predicted_class"],
+                        "confidence": moderation["ai_prediction"]["confidence"],
+                        "recommendation": moderation["moderation_recommendation"],
+                        "action_taken": moderation["moderation_status"],
+                        "timestamp": now,
+                    }},
+                    upsert=True,
+                )
+            else:
+                await db_manager.db["moderation_logs"].delete_one({"content_id": post_id})
+        else:
+            post.update(updates)
+            saved = True
+            moderation_logs = db_manager._collections.get("moderation_logs", [])
+            existing_log = next((row for row in moderation_logs if row.get("content_id") == post_id), None)
+            if moderation["ai_prediction"]:
+                log_updates = {
+                    "post_id": post_id,
+                    "content_id": post_id,
+                    "content_type": "post",
+                    "detected_language": moderation["language"],
+                    "ai_label": moderation["ai_prediction"]["predicted_class"],
+                    "confidence": moderation["ai_prediction"]["confidence"],
+                    "recommendation": moderation["moderation_recommendation"],
+                    "action_taken": moderation["moderation_status"],
+                    "timestamp": now,
+                }
+                if existing_log:
+                    existing_log.update(log_updates)
+                else:
+                    moderation_logs.append(log_updates)
+            elif existing_log:
+                db_manager._collections["moderation_logs"] = [
+                    row for row in moderation_logs if row.get("content_id") != post_id
+                ]
+    finally:
+        if not saved:
+            delete_media_files(new_media)
+
+    delete_media_files(removed_media)
+    await audit_logger.log_event(
+        actor_id=current_user["id"],
+        actor_role=current_user["role"],
+        event_type="POST_UPDATED",
+        resource_id=post_id,
+        details="Post text was resubmitted for moderation and the post was updated.",
+    )
+    if post["moderation_status"] != "APPROVED":
+        await create_notification(
+            recipient_id=current_user["id"],
+            kind="MODERATION_RESULT",
+            resource_type="post",
+            resource_id=post_id,
+        )
+    return (await _post_responses([post], current_user))[0]
 
 
 @router.delete("/{post_id}")
@@ -671,6 +898,21 @@ async def get_saved_posts(current_user: dict = Depends(get_current_user)):
     return [PostResponse(**{**p, "like_count": like_counts.get(p["id"], 0), "liked_by_me": p["id"] in liked_ids, "saved_by_me": True}) for p in posts]
 
 
+@router.get("/{post_id}", response_model=PostResponse)
+async def get_post(
+    post_id: str,
+    current_user: dict | None = Depends(get_optional_current_user),
+):
+    post = await _get_post(post_id)
+    if (
+        not post
+        or post.get("moderation_status") != "APPROVED"
+        or not await can_view_post(post, current_user.get("id") if current_user else None)
+    ):
+        raise HTTPException(status_code=404, detail="Approved post not found.")
+    return (await _post_responses([post], current_user))[0]
+
+
 @router.put("/{post_id}/like")
 async def like_post(post_id: str, request: Request, current_user: dict = Depends(get_current_user)):
     client_ip = request.client.host if request.client else "unknown"
@@ -702,6 +944,7 @@ async def like_post(post_id: str, request: Request, current_user: dict = Depends
         await create_notification(
             recipient_id=post.get("author_id"), kind="POST_LIKE", actor_id=current_user["id"],
             actor_username=current_user["username"], resource_type="post", resource_id=post_id,
+            section=content_notification_section(post.get("content_type")),
         )
     return {"liked": True, "like_count": like_count}
 

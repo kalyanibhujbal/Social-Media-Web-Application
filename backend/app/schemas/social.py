@@ -48,10 +48,15 @@ class ConnectionSummary(BaseModel):
 class NotificationResponse(BaseModel):
     id: str
     kind: str
+    section: Optional[str] = None
     actor_id: Optional[str] = None
     actor_username: Optional[str] = None
+    actor_full_name: Optional[str] = None
+    actor_avatar_url: Optional[str] = None
     resource_type: Optional[str] = None
     resource_id: Optional[str] = None
+    resource_status: Optional[str] = None
+    post_preview: Optional[str] = None
     is_read: bool = False
     created_at: str
 

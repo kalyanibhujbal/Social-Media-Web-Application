@@ -1,9 +1,11 @@
+import asyncio
 import unittest
 from datetime import datetime, timezone
 
 from fastapi.testclient import TestClient
 
 from main import app
+from app.api.v1.endpoints.posts import _notify_network_of_post
 from app.core.database import db_manager
 from app.core.security import create_access_token, hash_password
 from app.middleware.rate_limit import _request_history
@@ -289,6 +291,260 @@ class TestSocialPrivacyFeatures(unittest.TestCase):
             headers=_headers(outsider),
         )
         self.assertEqual([row["id"] for row in approved_search.json()], [private_user["id"]])
+
+    def test_connection_and_follow_requests_are_actionable_notifications(self):
+        sender = _seed_user("notification-sender")
+        recipient = _seed_user("notification-recipient", is_private=True)
+        follower = _seed_user("notification-follower")
+
+        connection = client.post(
+            "/api/v1/connections/requests",
+            headers=_headers(sender),
+            json={"target_user_id": recipient["id"]},
+        )
+        self.assertEqual(connection.status_code, 201, connection.text)
+        inbox = client.get("/api/v1/notifications", headers=_headers(recipient)).json()
+        connection_notice = next(row for row in inbox["notifications"] if row["kind"] == "CONNECTION_REQUEST")
+        self.assertEqual(connection_notice["actor_full_name"], sender["full_name"])
+        self.assertEqual(connection_notice["resource_status"], "PENDING")
+        self.assertEqual(inbox["unread_count"], 1)
+
+        accepted = client.post(
+            f"/api/v1/connections/{connection.json()['id']}/accept",
+            headers=_headers(recipient),
+        )
+        self.assertEqual(accepted.status_code, 200)
+        updated_inbox = client.get("/api/v1/notifications", headers=_headers(recipient)).json()
+        connection_notice = next(row for row in updated_inbox["notifications"] if row["kind"] == "CONNECTION_REQUEST")
+        self.assertEqual(connection_notice["resource_status"], "ACCEPTED")
+        self.assertTrue(connection_notice["is_read"])
+
+        reject_sender = _seed_user("notification-reject-sender")
+        rejected_connection = client.post(
+            "/api/v1/connections/requests",
+            headers=_headers(reject_sender),
+            json={"target_user_id": recipient["id"]},
+        )
+        self.assertEqual(rejected_connection.status_code, 201)
+        rejected = client.post(
+            f"/api/v1/connections/{rejected_connection.json()['id']}/reject",
+            headers=_headers(recipient),
+        )
+        self.assertEqual(rejected.status_code, 200)
+        reject_inbox = client.get("/api/v1/notifications", headers=_headers(reject_sender)).json()
+        self.assertEqual(reject_inbox["notifications"][0]["kind"], "CONNECTION_REJECTED")
+
+        follow = client.put(f"/api/v1/follows/{recipient['id']}", headers=_headers(follower))
+        self.assertEqual(follow.status_code, 200)
+        follow_inbox = client.get("/api/v1/notifications", headers=_headers(recipient)).json()
+        follow_notice = next(row for row in follow_inbox["notifications"] if row["kind"] == "FOLLOW_REQUEST")
+        self.assertEqual(follow_notice["resource_status"], "PENDING")
+        rejected = client.post(
+            f"/api/v1/follows/requests/{follower['id']}/reject",
+            headers=_headers(recipient),
+        )
+        self.assertEqual(rejected.status_code, 200)
+        follow_inbox = client.get("/api/v1/notifications", headers=_headers(recipient)).json()
+        follow_notice = next(row for row in follow_inbox["notifications"] if row["kind"] == "FOLLOW_REQUEST")
+        self.assertEqual(follow_notice["resource_status"], "REJECTED")
+        self.assertTrue(follow_notice["is_read"])
+        self.assertEqual(client.get("/api/v1/notifications", headers=_headers(sender)).json()["notifications"][0]["kind"], "CONNECTION_ACCEPTED")
+
+    def test_network_post_notifications_are_deduplicated_and_recheck_private_visibility(self):
+        author = _seed_user("network-author")
+        connection = _seed_user("network-connection")
+        follower = _seed_user("network-follower")
+        outsider = _seed_user("network-outsider")
+        db_manager._collections["connections"].append({
+            "id": "network-connection-id",
+            "requester_id": author["id"],
+            "recipient_id": connection["id"],
+            "status": "ACCEPTED",
+        })
+        follow = {
+            "id": "network-follow-id",
+            "follower_id": follower["id"],
+            "following_id": author["id"],
+            "status": "ACCEPTED",
+        }
+        db_manager._collections["follows"].append(follow)
+
+        post = {
+            "id": "network-post-id",
+            "author_id": author["id"],
+            "author_username": author["username"],
+            "content_type": "POST",
+            "content": "Network post preview",
+            "moderation_status": "APPROVED",
+        }
+        db_manager._collections["posts"].append(post)
+        asyncio.run(_notify_network_of_post(post))
+        asyncio.run(_notify_network_of_post(post))
+
+        connection_notices = client.get("/api/v1/notifications", headers=_headers(connection)).json()["notifications"]
+        follower_notices = client.get("/api/v1/notifications", headers=_headers(follower)).json()["notifications"]
+        outsider_notices = client.get("/api/v1/notifications", headers=_headers(outsider)).json()["notifications"]
+        self.assertEqual(len(connection_notices), 1)
+        self.assertEqual(follower_notices, [])
+        self.assertEqual(connection_notices[0]["kind"], "NETWORK_POST")
+        self.assertEqual(connection_notices[0]["post_preview"], "Network post preview")
+        self.assertEqual(outsider_notices, [])
+
+        private_author = _seed_user("network-private-author", is_private=True)
+        private_connection = _seed_user("network-private-connection")
+        private_follower = _seed_user("network-private-follower")
+        db_manager._collections["connections"].append({
+            "id": "private-network-connection",
+            "requester_id": private_author["id"],
+            "recipient_id": private_connection["id"],
+            "status": "ACCEPTED",
+        })
+        db_manager._collections["connections"].append({
+            "id": "private-network-follower-connection",
+            "requester_id": private_author["id"],
+            "recipient_id": private_follower["id"],
+            "status": "ACCEPTED",
+        })
+        private_follow = {
+            "id": "private-network-follow",
+            "follower_id": private_follower["id"],
+            "following_id": private_author["id"],
+            "status": "ACCEPTED",
+        }
+        db_manager._collections["follows"].append(private_follow)
+        private_post = {
+            "id": "private-network-post",
+            "author_id": private_author["id"],
+            "author_username": private_author["username"],
+            "content_type": "POST",
+            "content": "Private preview",
+            "moderation_status": "APPROVED",
+        }
+        db_manager._collections["posts"].append(private_post)
+        asyncio.run(_notify_network_of_post(private_post))
+        self.assertEqual(client.get("/api/v1/notifications", headers=_headers(private_connection)).json()["notifications"], [])
+        self.assertEqual(client.get("/api/v1/notifications", headers=_headers(private_follower)).json()["notifications"][0]["post_preview"], "Private preview")
+        db_manager._collections["follows"].remove(private_follow)
+        self.assertEqual(client.get("/api/v1/notifications", headers=_headers(private_follower)).json()["notifications"], [])
+
+    def test_article_and_event_updates_are_routed_to_their_sections(self):
+        author = _seed_user("section-author")
+        connection = _seed_user("section-connection")
+        db_manager._collections["connections"].append({
+            "id": "section-connection-id",
+            "requester_id": author["id"],
+            "recipient_id": connection["id"],
+            "status": "ACCEPTED",
+        })
+        article = {
+            "id": "section-article",
+            "author_id": author["id"],
+            "author_username": author["username"],
+            "content_type": "ARTICLE",
+            "content": "Article body",
+            "article": {"title": "New article"},
+            "moderation_status": "APPROVED",
+        }
+        event = {
+            "id": "section-event",
+            "author_id": author["id"],
+            "author_username": author["username"],
+            "content_type": "EVENT",
+            "content": "Event details",
+            "event": {"title": "Community meetup"},
+            "moderation_status": "APPROVED",
+        }
+        db_manager._collections["posts"].extend([article, event])
+        asyncio.run(_notify_network_of_post(article))
+        asyncio.run(_notify_network_of_post(event))
+
+        articles = client.get("/api/v1/notifications?section=articles", headers=_headers(connection)).json()
+        events = client.get("/api/v1/notifications?section=events", headers=_headers(connection)).json()
+        home = client.get("/api/v1/notifications?section=home", headers=_headers(connection)).json()
+        self.assertEqual([(row["kind"], row["post_preview"]) for row in articles["notifications"]], [("NETWORK_ARTICLE", "New article")])
+        self.assertEqual([(row["kind"], row["post_preview"]) for row in events["notifications"]], [("NETWORK_EVENT", "Community meetup")])
+        self.assertEqual(home["notifications"], [])
+        self.assertEqual(home["unread_by_section"]["articles"], 1)
+        self.assertEqual(home["unread_by_section"]["events"], 1)
+        self.assertEqual(home["unread_count"], 2)
+
+    def test_message_notifications_follow_conversation_read_state(self):
+        sender = _seed_user("message-notification-sender")
+        recipient = _seed_user("message-notification-recipient")
+        conversation_id = "message-notification-conversation"
+        db_manager._collections["connections"].append({
+            "id": "message-notification-connection",
+            "pair_key": ":".join(sorted([sender["id"], recipient["id"]])),
+            "requester_id": sender["id"],
+            "recipient_id": recipient["id"],
+            "status": "ACCEPTED",
+        })
+        db_manager._collections["conversations"].append({
+            "id": conversation_id,
+            "pair_key": ":".join(sorted([sender["id"], recipient["id"]])),
+            "member_ids": [sender["id"], recipient["id"]],
+        })
+
+        sent = client.post(
+            f"/api/v1/messages/conversations/{conversation_id}/messages",
+            headers=_headers(sender),
+            json={"content": "A new message"},
+        )
+        self.assertEqual(sent.status_code, 201, sent.text)
+        message_inbox = client.get("/api/v1/notifications?section=messages", headers=_headers(recipient)).json()
+        self.assertEqual(message_inbox["section_unread_count"], 1)
+        self.assertEqual(message_inbox["notifications"][0]["kind"], "MESSAGE")
+
+        marked = client.patch(
+            f"/api/v1/messages/conversations/{conversation_id}/read",
+            headers=_headers(recipient),
+        )
+        self.assertEqual(marked.status_code, 200)
+        message_inbox = client.get("/api/v1/notifications?section=messages", headers=_headers(recipient)).json()
+        self.assertEqual(message_inbox["unread_count"], 0)
+        self.assertTrue(message_inbox["notifications"][0]["is_read"])
+        self.assertTrue(db_manager._collections["messages"][0]["is_read"])
+
+        second_message = client.post(
+            f"/api/v1/messages/conversations/{conversation_id}/messages",
+            headers=_headers(sender),
+            json={"content": "Another unread message"},
+        )
+        self.assertEqual(second_message.status_code, 201)
+        unread_notice = client.get("/api/v1/notifications?section=messages", headers=_headers(recipient)).json()["notifications"][0]
+        marked_notice = client.patch(
+            f"/api/v1/notifications/{unread_notice['id']}/read",
+            headers=_headers(recipient),
+        )
+        self.assertEqual(marked_notice.status_code, 200)
+        self.assertTrue(all(row["is_read"] for row in db_manager._collections["messages"]))
+        self.assertTrue(all(row["is_read"] for row in db_manager._collections["notifications"] if row.get("kind") == "MESSAGE"))
+
+    def test_mark_all_notifications_read_also_clears_unread_message_state(self):
+        sender = _seed_user("mark-all-sender")
+        recipient = _seed_user("mark-all-recipient")
+        db_manager._collections["notifications"].append({
+            "id": "mark-all-message-notice",
+            "recipient_id": recipient["id"],
+            "kind": "MESSAGE",
+            "resource_type": "conversation",
+            "resource_id": "mark-all-conversation",
+            "is_read": False,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        })
+        db_manager._collections["messages"].append({
+            "id": "mark-all-message",
+            "sender_id": sender["id"],
+            "recipient_id": recipient["id"],
+            "conversation_id": "mark-all-conversation",
+            "is_read": False,
+            "content": "Unread",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        })
+        response = client.post("/api/v1/notifications/read-all", headers=_headers(recipient))
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(db_manager._collections["notifications"][0]["is_read"])
+        self.assertTrue(db_manager._collections["messages"][0]["is_read"])
 
 
 if __name__ == "__main__":

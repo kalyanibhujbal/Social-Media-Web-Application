@@ -59,6 +59,8 @@ class PostResponse(BaseModel):
     moderation_explanation: Optional[str] = None
     ai_prediction: Optional[AIPrediction] = None
     created_at: str
+    edited_at: Optional[str] = None
+    is_edited: bool = False
     like_count: int = 0
     liked_by_me: bool = False
     saved_by_me: bool = False
