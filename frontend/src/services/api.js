@@ -8,6 +8,24 @@ const getHeaders = (token = null) => {
   return headers;
 };
 
+const getErrorMessage = (detail, fallback) => {
+  if (typeof detail === 'string' && detail.trim()) return detail;
+
+  const issues = Array.isArray(detail) ? detail : [detail];
+  const messages = issues.map((issue) => {
+    if (typeof issue === 'string') return issue;
+    if (!issue || typeof issue !== 'object') return '';
+
+    const message = issue.msg || issue.message || issue.detail;
+    if (typeof message !== 'string') return '';
+
+    const location = Array.isArray(issue.loc) ? issue.loc[issue.loc.length - 1] : '';
+    return location && location !== 'body' ? `${location}: ${message}` : message;
+  }).filter(Boolean);
+
+  return messages.length ? [...new Set(messages)].join(' ') : fallback;
+};
+
 export const api = {
   // Auth
   register: async (username, email, password, termsAccepted, fullName = '') => {
@@ -19,7 +37,7 @@ export const api = {
     });
     if (!res.ok) {
       const err = await res.json();
-      throw new Error(err.detail || 'Registration failed');
+      throw new Error(getErrorMessage(err.detail, 'Registration failed'));
     }
     return res.json();
   },
@@ -33,7 +51,7 @@ export const api = {
     });
     if (!res.ok) {
       const err = await res.json();
-      throw new Error(err.detail || 'Login failed');
+      throw new Error(getErrorMessage(err.detail, 'Login failed'));
     }
     return res.json();
   },

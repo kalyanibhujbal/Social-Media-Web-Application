@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from typing import List
 
 from app.schemas.comment import CommentCreate, CommentResponse
-from app.schemas.post import AIPrediction, WordAttribution
+from app.schemas.post import AIPrediction
 from app.api.deps import get_current_user, get_optional_current_user
 from app.services.sanitizer import InputSanitizer
 from app.services.preprocessing import TextPreprocessor
@@ -47,13 +47,13 @@ async def create_comment(
         raise HTTPException(status_code=404, detail="Approved post not found.")
 
     # Preprocess & Lang Detect
-    preproc = TextPreprocessor.preprocess(sanitized_content)
-    lang = LanguageDetector.detect_language(preproc["cleaned_text"])
+    preproc = TextPreprocessor.process(sanitized_content)
+    lang = LanguageDetector.detect_language(preproc["model_text"])
 
     # Predict & Explain
-    prediction = inference_service.predict(preproc["cleaned_text"])
+    prediction = inference_service.predict(preproc["model_text"])
     xai_res = xai_engine.explain(
-        text=preproc["cleaned_text"],
+        text=preproc["model_text"],
         label=prediction["label"],
         probabilities=prediction["probabilities"]
     )
@@ -86,7 +86,7 @@ async def create_comment(
             "inference_timestamp": prediction["inference_timestamp"],
             "explanation": {
                 "method": xai_res["method"],
-                "top_words": [WordAttribution(**item) for item in xai_res["top_words"]]
+                "top_words": xai_res["top_words"]
             }
         },
         "created_at": datetime.now(timezone.utc).isoformat()

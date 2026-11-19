@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from typing import List, Optional
 
-from app.schemas.post import PostCreate, PostResponse, AIPrediction, XAIExplanation, WordAttribution
+from app.schemas.post import PostCreate, PostResponse, AIPrediction, XAIExplanation
 from app.schemas.moderation import AppealRequest
 from app.api.deps import get_current_user, get_optional_current_user
 from app.services.sanitizer import InputSanitizer
@@ -77,7 +77,7 @@ async def create_post(
             "inference_timestamp": prediction["inference_timestamp"],
             "explanation": {
                 "method": xai_res["method"],
-                "top_words": [WordAttribution(**item) for item in xai_res["top_words"]]
+                "top_words": xai_res["top_words"]
             }
         },
         "created_at": datetime.now(timezone.utc).isoformat()

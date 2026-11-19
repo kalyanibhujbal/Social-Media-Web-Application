@@ -77,7 +77,11 @@ python -m unittest discover -s tests
 # Start FastAPI server
 python -m uvicorn main:app --reload --port 8000
 ```
+On Windows, start the local MongoDB service in an Administrator PowerShell terminal before starting the API when using the default localhost database: `Start-Service MongoDB`.
 Backend server starts at: `http://localhost:8000` (API Docs at `http://localhost:8000/docs`).
+Keep this backend terminal running while using the frontend; feed loading and sign-in both require the API.
+If MongoDB is unavailable, development uses temporary in-memory storage; accounts and posts are lost when the backend stops.
+On this Windows setup, if the system Python is unavailable, run the prepared backend environment from `backend`: `.\.venv-clean\Scripts\python.exe -m uvicorn main:app --reload --port 8000`.
 
 ### 2. Frontend Setup
 ```bash

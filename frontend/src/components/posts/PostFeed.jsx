@@ -14,8 +14,11 @@ export const PostFeed = ({ searchQuery = '' }) => {
     try {
       const data = await api.listPosts('APPROVED');
       setPosts(data);
-    } catch {
-      setError('We could not load the community feed. Check your connection and try again.');
+    } catch (err) {
+      const message = err.message || '';
+      setError(message === 'Failed to fetch' || message.includes('NetworkError')
+        ? 'The community API is unreachable. Check that the backend is running and try again.'
+        : message || 'We could not load the community feed. Please try again.');
     } finally {
       setLoading(false);
     }

@@ -19,7 +19,10 @@ export const Login = ({ setActivePage }) => {
       const loggedUser = await login(email, password);
       setActivePage(loggedUser.role === 'ADMIN' ? 'admin' : 'dashboard');
     } catch (err) {
-      setError(err.message || 'Sign in failed. Check your details and try again.');
+      const message = err.message || '';
+      setError(message === 'Failed to fetch' || message.includes('NetworkError')
+        ? 'OpenVibe could not reach the server. Check that the backend is running and try again.'
+        : message || 'Sign in failed. Check your details and try again.');
     } finally {
       setLoading(false);
     }
