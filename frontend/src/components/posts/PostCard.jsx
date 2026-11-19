@@ -171,6 +171,23 @@ export const PostCard = ({ post, onSavedStateChange, onOpenProfile, onOpenArticl
         </div>
       </header>
 
+      {mediaItems.length > 0 && <div className={`post-media-gallery ${mediaItems.length > 1 ? 'post-media-multiple' : ''}`} aria-label="Post media">
+        {visibleMedia.map((item, index) => <div className={`post-media-item ${item.media_type === 'video' ? 'post-video-item' : ''}`} key={item.filename}>
+          {item.media_type === 'video'
+            ? <>
+              <video src={api.mediaUrl(item.url)} controls playsInline preload="metadata" crossOrigin="use-credentials" aria-label={`Video shared by ${post.author_full_name || post.author_username}`} />
+              <button type="button" className="media-view-button" onClick={() => setLightboxIndex(index)} aria-label="Open video in media viewer"><Expand size={16} /></button>
+            </>
+            : <button type="button" className="post-media-open" onClick={() => setLightboxIndex(index)} aria-label={`View image ${index + 1} of ${mediaItems.length}`}>
+              <img src={api.mediaUrl(item.url)} alt={post.content_type === 'ARTICLE' ? `Cover image for ${post.article?.title || 'article'}` : post.content ? `Image shared with post: ${post.content.slice(0, 100)}` : `Image shared by ${post.author_full_name || post.author_username}`} loading="lazy" crossOrigin="use-credentials" />
+            </button>}
+          {isOwner && <button type="button" className="media-remove-button" disabled={removingMedia === item.filename} onClick={() => removeOwnMedia(item)} aria-label={`Remove media ${index + 1} from your post`} title="Remove this media"><Trash2 size={14} /></button>}
+          {index === visibleMedia.length - 1 && hiddenMediaCount > 0 && <button type="button" className="post-media-more" onClick={() => setLightboxIndex(index)} aria-label={`View ${hiddenMediaCount} more media items`}>
+            <strong>+{hiddenMediaCount} more</strong><span>View all media</span>
+          </button>}
+        </div>)}
+      </div>}
+
       {post.content_type === 'EVENT' && <section className="event-post-details">
         <div className="content-type-label"><CalendarDays size={15} /> OpenVibe event</div>
         <h2>{post.event?.title || 'Community event'}</h2>
@@ -190,23 +207,6 @@ export const PostCard = ({ post, onSavedStateChange, onOpenProfile, onOpenArticl
       </section>}
 
       {post.content_type !== 'EVENT' && post.content_type !== 'ARTICLE' && post.content && <p className="post-content">{post.content}</p>}
-
-      {mediaItems.length > 0 && <div className={`post-media-gallery ${mediaItems.length > 1 ? 'post-media-multiple' : ''}`} aria-label="Post media">
-        {visibleMedia.map((item, index) => <div className={`post-media-item ${item.media_type === 'video' ? 'post-video-item' : ''}`} key={item.filename}>
-          {item.media_type === 'video'
-            ? <>
-              <video src={api.mediaUrl(item.url)} controls playsInline preload="metadata" crossOrigin="use-credentials" aria-label={`Video shared by ${post.author_full_name || post.author_username}`} />
-              <button type="button" className="media-view-button" onClick={() => setLightboxIndex(index)} aria-label="Open video in media viewer"><Expand size={16} /></button>
-            </>
-            : <button type="button" className="post-media-open" onClick={() => setLightboxIndex(index)} aria-label={`View image ${index + 1} of ${mediaItems.length}`}>
-              <img src={api.mediaUrl(item.url)} alt={post.content_type === 'ARTICLE' ? `Cover image for ${post.article?.title || 'article'}` : post.content ? `Image shared with post: ${post.content.slice(0, 100)}` : `Image shared by ${post.author_full_name || post.author_username}`} loading="lazy" crossOrigin="use-credentials" />
-            </button>}
-          {isOwner && <button type="button" className="media-remove-button" disabled={removingMedia === item.filename} onClick={() => removeOwnMedia(item)} aria-label={`Remove media ${index + 1} from your post`} title="Remove this media"><Trash2 size={14} /></button>}
-          {index === visibleMedia.length - 1 && hiddenMediaCount > 0 && <button type="button" className="post-media-more" onClick={() => setLightboxIndex(index)} aria-label={`View ${hiddenMediaCount} more media items`}>
-            <strong>+{hiddenMediaCount} more</strong><span>View all media</span>
-          </button>}
-        </div>)}
-      </div>}
 
       {showReviewStatus && <section className="post-owner-review-status" aria-label="Your post review status">
         {showModerationExplanation && <p>{explanationText}</p>}

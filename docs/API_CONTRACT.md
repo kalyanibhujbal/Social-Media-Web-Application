@@ -11,12 +11,12 @@ Base path: `/api/v1`. API responses use `Cache-Control: no-store`. Browser auth 
 ## Posts, media, events, articles, comments, dashboards
 
 * `POST /posts`: authenticated text post creation and moderation.
-* `POST /posts/media`: multipart media post (`caption`, `files`); accepts up to five combined JPG/JPEG, PNG, WEBP, MP4, and WEBM files, including mixed image/video posts.
+* `POST /posts/media`: multipart media post (`caption`, `files`); accepts up to four JPG/JPEG, PNG, or WEBP images and one MP4 or WEBM video (five files total), including mixed image/video posts.
 * `POST /posts/events`: multipart event creation (`title`, `description`, `event_date`, `event_time`, `location`, optional `cover_image`).
 * `POST /posts/articles`: multipart article creation (`title`, `content`, optional `cover_image`); `PUT /posts/{post_id}/article` edits an article owned by the current user.
 * `GET /posts/media/{filename}` serves media only when the related post is approved and visible to the viewer. `DELETE /posts/{post_id}` deletes the current user's post and associated media; `DELETE /posts/{post_id}/media/{filename}` deletes only the owner's media.
 * `GET /posts`: approved posts from public accounts plus the current user's own posts and posts from private accounts they are approved to follow. Supplying `status_filter` other than `APPROVED` returns 400.
-* `GET /posts/explore`: approved posts from public accounts only; private-account posts are excluded for every viewer.
+* `GET /posts/explore`: approved posts from public accounts only; private-account posts are excluded for every viewer. Supports `offset` (default 0) and `limit` (default 24, maximum 50) for pagination.
 * `GET /posts/user/me`, `GET /comments/user/me`, `GET /dashboard/me`: authenticated and scoped to the current account.
 * `POST /posts/{post_id}/appeal`: authenticated owner only; request body `{ "reason": "..." }`, so the reason is not placed in the URL.
 * `GET /users/{user_id}` returns restricted profile details for private accounts only to the owner and approved followers. `GET /users/{user_id}/posts` returns 403 to other viewers until approval.

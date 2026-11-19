@@ -3,7 +3,7 @@ import { AuthContext } from '../../context/AuthContext';
 import { api } from '../../services/api';
 import { Avatar } from '../common/Avatar';
 import {
-  AlertCircle, CalendarDays, CheckCircle2, FileText, Image, MapPin,
+  AlertCircle, CalendarDays, CheckCircle2, FileText, Image, MapPin, Video,
   Send, ShieldAlert, X,
 } from 'lucide-react';
 
@@ -18,6 +18,8 @@ const IMAGE_EXTENSIONS = new Set(['jpg', 'jpeg', 'png', 'webp']);
 const VIDEO_EXTENSIONS = new Set(['mp4', 'webm']);
 const IMAGE_LIMIT = 10 * 1024 * 1024;
 const VIDEO_LIMIT = 100 * 1024 * 1024;
+const MAX_MEDIA_FILES = 5;
+const MAX_IMAGE_FILES = 4;
 
 const fileExtension = (file) => file.name.split('.').pop()?.toLowerCase() || '';
 const formatSize = (size) => size >= 1024 * 1024
@@ -72,12 +74,22 @@ export const CreatePostForm = ({ onPostCreated }) => {
     }
   };
 
-  const handleMediaSelection = (event) => {
-    const files = Array.from(event.target.files || []);
-    event.target.value = '';
+  const addMediaFiles = (files, expectedType) => {
     if (!files.length) return;
-    if (files.length + selectedMedia.length > 5) {
-      setError('A post can contain up to five images and videos combined.');
+    if (files.length + selectedMedia.length > MAX_MEDIA_FILES) {
+      setError('A post can contain up to four images and one video (five files total).');
+      return;
+    }
+    const newImages = files.filter((file) => IMAGE_EXTENSIONS.has(fileExtension(file)));
+    const newVideos = files.filter((file) => VIDEO_EXTENSIONS.has(fileExtension(file)));
+    const existingImages = selectedMedia.filter((item) => IMAGE_EXTENSIONS.has(fileExtension(item.file)));
+    const existingVideos = selectedMedia.filter((item) => VIDEO_EXTENSIONS.has(fileExtension(item.file)));
+    if (existingImages.length + newImages.length > MAX_IMAGE_FILES) {
+      setError('A post can contain up to four images.');
+      return;
+    }
+    if (existingVideos.length + newVideos.length > 1) {
+      setError('A post can contain only one video.');
       return;
     }
     const invalid = files.find((file) => {
@@ -85,7 +97,11 @@ export const CreatePostForm = ({ onPostCreated }) => {
       const isImage = IMAGE_EXTENSIONS.has(extension);
       const isVideo = VIDEO_EXTENSIONS.has(extension);
       const maxSize = isVideo ? VIDEO_LIMIT : IMAGE_LIMIT;
-      return (!isImage && !isVideo) || file.size > maxSize || file.size === 0;
+      return (!isImage && !isVideo)
+        || (expectedType === 'image' && !isImage)
+        || (expectedType === 'video' && !isVideo)
+        || file.size > maxSize
+        || file.size === 0;
     });
     if (invalid) {
       const isVideo = VIDEO_EXTENSIONS.has(fileExtension(invalid));
@@ -99,6 +115,18 @@ export const CreatePostForm = ({ onPostCreated }) => {
       ...selectedMedia,
       ...files.map((file) => ({ file, previewUrl: URL.createObjectURL(file) })),
     ]);
+  };
+
+  const handleImageSelection = (event) => {
+    const files = Array.from(event.target.files || []);
+    event.target.value = '';
+    addMediaFiles(files, 'image');
+  };
+
+  const handleVideoSelection = (event) => {
+    const files = Array.from(event.target.files || []);
+    event.target.value = '';
+    addMediaFiles(files, 'video');
   };
 
   const handleCoverSelection = (event) => {
@@ -175,7 +203,6 @@ export const CreatePostForm = ({ onPostCreated }) => {
   const showResultExplanation = !published && resultExplanation
     && !/no text was submitted|media is not analyzed by the moderation model/i.test(resultExplanation);
   const isMediaPost = format === 'media';
-  const mediaAccept = '.jpg,.jpeg,.png,.webp,.mp4,.webm,image/jpeg,image/png,image/webp,video/mp4,video/webm';
 
   return (
     <section className="card create-post-card" aria-label="Create content">
@@ -234,13 +261,18 @@ export const CreatePostForm = ({ onPostCreated }) => {
         </div>
 
         {isMediaPost && <div className="media-picker-panel">
-          <label className="btn btn-outline btn-sm media-picker-button">
-              <Image size={16} />
-              {selectedMedia.length ? 'Add more media' : 'Choose photos or videos'}
-              <input type="file" accept={mediaAccept} multiple onChange={handleMediaSelection} hidden />
-          </label>
-            <span className="muted-note">JPG, JPEG, PNG, WEBP · 10 MB each · MP4 or WEBM · 100 MB each · up to 5 files</span>
-            {selectedMedia.length > 0 && <div className="media-preview-grid">
+          <div className="media-picker-actions" aria-label="Attach media">
+            <label className="btn btn-outline btn-sm media-picker-button">
+              <Image size={16} aria-hidden="true" /> Add photos
+              <input type="file" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp" multiple onChange={handleImageSelection} hidden />
+            </label>
+            <label className="btn btn-outline btn-sm media-picker-button">
+              <Video size={16} aria-hidden="true" /> Add a video
+              <input type="file" accept=".mp4,.webm,video/mp4,video/webm" onChange={handleVideoSelection} hidden />
+            </label>
+            <span className="muted-note">Up to 4 photos and 1 video · JPG, PNG, WEBP · 10 MB each · MP4 or WEBM · 100 MB</span>
+          </div>
+          {selectedMedia.length > 0 && <div className="media-preview-grid">
             {selectedMedia.map(({ file, previewUrl }, index) => <div className="media-preview-item" key={`${file.name}-${file.lastModified}-${index}`}>
                 {VIDEO_EXTENSIONS.has(fileExtension(file))
                 ? <video src={previewUrl} controls preload="metadata" aria-label={`Preview of ${file.name}`} />

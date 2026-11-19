@@ -65,8 +65,9 @@ export const api = {
     return res.json();
   },
 
-  listExplorePosts: async () => {
-    const res = await fetch(`${API_BASE_URL}/posts/explore`, { credentials: 'include', headers: getHeaders() });
+  listExplorePosts: async (offset = 0, limit = 24) => {
+    const params = new URLSearchParams({ offset: String(offset), limit: String(limit) });
+    const res = await fetch(`${API_BASE_URL}/posts/explore?${params}`, { credentials: 'include', headers: getHeaders() });
     if (!res.ok) throw new Error('Could not load Explore posts');
     return res.json();
   },

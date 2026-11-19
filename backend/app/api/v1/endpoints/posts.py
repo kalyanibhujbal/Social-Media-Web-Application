@@ -1,5 +1,6 @@
 import uuid
 from datetime import date, datetime, time, timezone
+from pathlib import Path
 from fastapi import APIRouter, Depends, File, Form, HTTPException, status, Query, Request, UploadFile
 from fastapi.responses import FileResponse
 from typing import List, Optional
@@ -194,6 +195,7 @@ async def _approved_posts(
     author_ids: set[str],
     limit: int = 50,
     content_type: str | None = None,
+    offset: int = 0,
 ) -> list[dict]:
     if not author_ids:
         return []
@@ -207,14 +209,14 @@ async def _approved_posts(
         else:
             query["content_type"] = content_type
     if db_manager.use_mongo and db_manager.db is not None:
-        return await db_manager.db["posts"].find(query).sort("created_at", -1).limit(limit).to_list(length=limit)
+        return await db_manager.db["posts"].find(query).sort([("created_at", -1), ("id", -1)]).skip(offset).limit(limit).to_list(length=limit)
     posts = [
         row for row in db_manager._collections.get("posts", [])
         if row.get("moderation_status") == "APPROVED"
         and row.get("author_id") in author_ids
         and (not content_type or row.get("content_type", "POST") == content_type)
     ]
-    return sorted(posts, key=lambda row: row.get("created_at", ""), reverse=True)[:limit]
+    return sorted(posts, key=lambda row: (row.get("created_at", ""), row.get("id", "")), reverse=True)[offset:offset + limit]
 
 
 async def _post_responses(posts: list[dict], current_user: dict | None) -> list[PostResponse]:
@@ -266,6 +268,8 @@ async def create_media_post(
     rate_limit_check(client_ip, max_requests=10, window_seconds=60)
     if not files or len(files) > 5:
         raise HTTPException(status_code=400, detail="Add between one and five media files.")
+    if sum(Path(upload.filename or "").suffix.lower() in {".mp4", ".webm"} for upload in files) > 1:
+        raise HTTPException(status_code=400, detail="A post can contain only one video.")
     if len(caption) > 2000:
         raise HTTPException(status_code=400, detail="Captions cannot exceed 2,000 characters.")
 
@@ -616,10 +620,14 @@ async def list_posts(
 
 
 @router.get("/explore", response_model=List[PostResponse])
-async def explore_posts(current_user: dict | None = Depends(get_optional_current_user)):
+async def explore_posts(
+    offset: int = Query(0, ge=0),
+    limit: int = Query(24, ge=1, le=50),
+    current_user: dict | None = Depends(get_optional_current_user),
+):
     """Explore only approved posts from public accounts."""
     author_ids = await visible_author_ids(public_only=True)
-    posts = await _approved_posts(author_ids, limit=100)
+    posts = await _approved_posts(author_ids, limit=limit, offset=offset)
     return await _post_responses(posts, current_user)
 
 @router.get("/user/me", response_model=List[PostResponse])

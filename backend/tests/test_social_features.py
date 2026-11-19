@@ -196,6 +196,39 @@ class TestSocialPrivacyFeatures(unittest.TestCase):
         inactive_owner_feed = client.get("/api/v1/posts", headers=_headers(follower))
         self.assertEqual([row["id"] for row in inactive_owner_feed.json()], ["public-post"])
 
+    def test_explore_pagination_only_returns_public_posts(self):
+        public_author = _seed_user("pagination-public")
+        private_author = _seed_user("pagination-private", is_private=True)
+        older = _seed_post(public_author, "pagination-older", "older public post")
+        newer = _seed_post(public_author, "pagination-newer", "newer public post")
+        _seed_post(private_author, "pagination-hidden", "private post")
+        older["created_at"] = "2024-01-01T00:00:00+00:00"
+        newer["created_at"] = "2024-01-02T00:00:00+00:00"
+
+        first_page = client.get("/api/v1/posts/explore?offset=0&limit=1")
+        second_page = client.get("/api/v1/posts/explore?offset=1&limit=1")
+
+        self.assertEqual(first_page.status_code, 200)
+        self.assertEqual(second_page.status_code, 200)
+        self.assertEqual([row["id"] for row in first_page.json()], ["pagination-newer"])
+        self.assertEqual([row["id"] for row in second_page.json()], ["pagination-older"])
+        self.assertEqual(client.get("/api/v1/posts/explore?limit=51").status_code, 422)
+
+    def test_media_post_rejects_multiple_videos(self):
+        user = _seed_user("video-limit-user")
+        response = client.post(
+            "/api/v1/posts/media",
+            headers=_headers(user),
+            data={"caption": "Two videos are not allowed"},
+            files=[
+                ("files", ("first.mp4", b"first", "video/mp4")),
+                ("files", ("second.webm", b"second", "video/webm")),
+            ],
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["detail"], "A post can contain only one video.")
+
     def test_private_setting_can_be_changed_and_pending_requests_accepted_when_public(self):
         owner = _seed_user("switch-owner", is_private=True)
         follower = _seed_user("switch-follower")
