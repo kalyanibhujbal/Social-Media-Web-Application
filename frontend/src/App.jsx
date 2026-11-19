@@ -7,6 +7,10 @@ import { CookieBanner } from './components/common/CookieBanner';
 import { MobileNavigation } from './components/common/MobileNavigation';
 
 import { Home } from './pages/Home';
+import { Explore } from './pages/Explore';
+import { Events } from './pages/Events';
+import { Articles } from './pages/Articles';
+import { ArticleReader } from './pages/ArticleReader';
 import { MyNetwork } from './pages/MyNetwork';
 import { Notifications } from './pages/Notifications';
 import { Messages } from './pages/Messages';
@@ -23,14 +27,31 @@ export function App() {
   const [activePage, setActivePage] = useState('home');
   const [searchQuery, setSearchQuery] = useState('');
   const [profileUserId, setProfileUserId] = useState(null);
+  const [selectedArticle, setSelectedArticle] = useState(null);
 
   const openProfile = (id) => { setProfileUserId(id); setActivePage('profile'); };
   const openOwnProfile = () => { setProfileUserId(null); setActivePage('profile'); };
+  const openArticle = (article) => { setSelectedArticle(article); setActivePage('article'); };
+  const openComposerFormat = (format) => {
+    setActivePage('home');
+    window.setTimeout(() => {
+      document.querySelector(`[data-content-format="${format}"]`)?.click();
+      document.getElementById('post-content')?.focus();
+    }, 80);
+  };
 
   const renderPage = () => {
     switch (activePage) {
       case 'home':
-        return <Home setActivePage={setActivePage} searchQuery={searchQuery} onSearch={setSearchQuery} onOpenProfile={openProfile} onOpenOwnProfile={openOwnProfile} />;
+        return <Home setActivePage={setActivePage} searchQuery={searchQuery} onSearch={setSearchQuery} onOpenProfile={openProfile} onOpenOwnProfile={openOwnProfile} onOpenArticle={openArticle} />;
+      case 'explore':
+        return <Explore onOpenProfile={openProfile} onOpenArticle={openArticle} />;
+      case 'events':
+        return <Events onOpenProfile={openProfile} onOpenArticle={openArticle} onCreateEvent={() => openComposerFormat('event')} />;
+      case 'articles':
+        return <Articles onOpenProfile={openProfile} onOpenArticle={openArticle} onCreateArticle={() => openComposerFormat('article')} />;
+      case 'article':
+        return <ArticleReader key={selectedArticle?.id} article={selectedArticle} onBack={() => setActivePage('articles')} onOpenProfile={openProfile} onArticleUpdated={setSelectedArticle} onArticleDeleted={() => { setSelectedArticle(null); setActivePage('articles'); }} />;
       case 'network':
         return <MyNetwork setActivePage={setActivePage} onOpenProfile={openProfile} />;
       case 'notifications':
@@ -38,9 +59,9 @@ export function App() {
       case 'messages':
         return <Messages setActivePage={setActivePage} />;
       case 'profile':
-        return <Profile setActivePage={setActivePage} viewedUserId={profileUserId} />;
+        return <Profile setActivePage={setActivePage} viewedUserId={profileUserId} onOpenProfile={openProfile} onOpenArticle={openArticle} />;
       case 'saved':
-        return <SavedPosts setActivePage={setActivePage} />;
+        return <SavedPosts setActivePage={setActivePage} onOpenProfile={openProfile} onOpenArticle={openArticle} />;
       case 'login':
         return <Login setActivePage={setActivePage} />;
       case 'register':
@@ -63,7 +84,7 @@ export function App() {
       case 'copyright':
         return <LegalPages pageType={activePage} setActivePage={setActivePage} />;
       default:
-        return <Home setActivePage={setActivePage} searchQuery={searchQuery} onSearch={setSearchQuery} onOpenProfile={openProfile} onOpenOwnProfile={openOwnProfile} />;
+        return <Home setActivePage={setActivePage} searchQuery={searchQuery} onSearch={setSearchQuery} onOpenProfile={openProfile} onOpenOwnProfile={openOwnProfile} onOpenArticle={openArticle} />;
     }
   };
 

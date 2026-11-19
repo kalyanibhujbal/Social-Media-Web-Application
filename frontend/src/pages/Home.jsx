@@ -8,11 +8,11 @@ import { BrandImage } from '../components/common/BrandImage';
 import { PostCard } from '../components/posts/PostCard';
 import { api } from '../services/api';
 import {
-  Activity, ArrowRight, Bookmark, FileText, LockKeyhole,
+  Activity, ArrowRight, Bookmark, BookOpen, CalendarDays, Compass, FileText, LockKeyhole,
   Search, ShieldCheck, Sparkles, UserRound,
 } from 'lucide-react';
 
-export const Home = ({ setActivePage, searchQuery = '', onSearch, onOpenProfile, onOpenOwnProfile }) => {
+export const Home = ({ setActivePage, searchQuery = '', onSearch, onOpenProfile, onOpenOwnProfile, onOpenArticle }) => {
   const { user } = useContext(AuthContext);
   const [showSandbox, setShowSandbox] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
@@ -44,7 +44,7 @@ export const Home = ({ setActivePage, searchQuery = '', onSearch, onOpenProfile,
           <section className="card mini-profile-card">
             <BrandImage className="mini-profile-cover" src="/images/cover.jpg" alt="OpenVibe profile cover artwork" loading="eager" />
             <div className="mini-profile-body">
-              <Avatar name={user?.username || 'OpenVibe member'} size="xl" className="mini-profile-avatar" />
+              <Avatar name={user?.full_name || user?.username || 'OpenVibe member'} src={user?.avatar_url} size="xl" className="mini-profile-avatar" />
               {user ? <>
                 <h2>{user.full_name || user.username}</h2>
                 <p className="mini-profile-subtitle">{user.headline || `@${user.username}`}</p>
@@ -64,10 +64,10 @@ export const Home = ({ setActivePage, searchQuery = '', onSearch, onOpenProfile,
           </section>
 
           <section className="card sidebar-prompt">
-            <span className="sidebar-icon"><ShieldCheck size={17} aria-hidden="true" /></span>
-            <h2>Safety with context</h2>
-            <p>AI predictions help route content for review. They can be wrong and are not legal decisions.</p>
-            <button type="button" className="text-link-button" onClick={() => setActivePage('ai-transparency')}>How moderation works <ArrowRight size={14} /></button>
+            <span className="sidebar-icon"><Compass size={17} aria-hidden="true" /></span>
+            <h2>Find your community</h2>
+            <p>Discover fresh perspectives, creators, and conversations across OpenVibe.</p>
+            <button type="button" className="text-link-button" onClick={() => setActivePage('explore')}>Explore the community <ArrowRight size={14} /></button>
           </section>
         </aside>
 
@@ -82,6 +82,12 @@ export const Home = ({ setActivePage, searchQuery = '', onSearch, onOpenProfile,
             <BrandImage src="/images/post-team.jpg" alt="A small team collaborating around laptops" loading="lazy" />
           </header>
 
+          <nav className="content-discovery-links" aria-label="Community content">
+            <span>Discover</span>
+            <button type="button" onClick={() => setActivePage('events')}><CalendarDays size={16} /> Events <ArrowRight size={14} /></button>
+            <button type="button" onClick={() => setActivePage('articles')}><BookOpen size={16} /> Articles <ArrowRight size={14} /></button>
+          </nav>
+
           <form className="mobile-feed-search" role="search" onSubmit={(event) => { event.preventDefault(); onSearch?.(mobileQuery.trim()); }}>
             <Search size={17} aria-hidden="true" />
             <label htmlFor="mobile-post-search" className="sr-only">Search people and posts</label>
@@ -93,7 +99,6 @@ export const Home = ({ setActivePage, searchQuery = '', onSearch, onOpenProfile,
             <section className="card guest-composer">
               <Avatar name="OpenVibe member" size="md" />
               <button type="button" onClick={() => setActivePage('login')}>Sign in to start a post…</button>
-              <span className="composer-shield"><ShieldCheck size={17} /> Posts are checked before publication</span>
             </section>
           )}
 
@@ -101,21 +106,21 @@ export const Home = ({ setActivePage, searchQuery = '', onSearch, onOpenProfile,
             <div className="section-heading-row"><div><span className="eyebrow">SEARCH</span><h2>Results for “{searchQuery.trim()}”</h2></div><button className="text-link-button" type="button" onClick={() => onSearch?.('')}>Clear search</button></div>
             {searchLoading && <div className="card loading-state" role="status">Searching members and posts…</div>}
             {searchError && <div className="notice-card notice-card-error" role="alert">{searchError}</div>}
-            {!searchLoading && !searchError && searchResults.users.length > 0 && <section className="search-people-results" aria-label="People"><h3>People</h3><div className="people-grid">{searchResults.users.map((person) => <article className="person-card search-person-card" key={person.id}><Avatar name={person.full_name || person.username} size="lg" /><div><button className="person-name-button" type="button" onClick={() => onOpenProfile?.(person.id)}>{person.full_name || person.username}</button><p>{person.headline || `@${person.username}`}</p><span className="muted-note">@{person.username}</span></div><button type="button" className="text-link-button" onClick={() => onOpenProfile?.(person.id)}>View profile <ArrowRight size={14} /></button></article>)}</div></section>}
-            {!searchLoading && !searchError && searchResults.posts.length > 0 && <section aria-label="Posts"><h3>Posts</h3>{searchResults.posts.map((post) => <PostCard key={post.id} post={post} />)}</section>}
+            {!searchLoading && !searchError && searchResults.users.length > 0 && <section className="search-people-results" aria-label="People"><h3>People</h3><div className="people-grid">{searchResults.users.map((person) => <article className="person-card search-person-card" key={person.id}><Avatar name={person.full_name || person.username} src={person.avatar_url} size="lg" /><div><button className="person-name-button" type="button" onClick={() => onOpenProfile?.(person.id)}>{person.full_name || person.username}</button><p>{person.headline || `@${person.username}`}</p><span className="muted-note">@{person.username}</span></div><button type="button" className="text-link-button" onClick={() => onOpenProfile?.(person.id)}>View profile <ArrowRight size={14} /></button></article>)}</div></section>}
+            {!searchLoading && !searchError && searchResults.posts.length > 0 && <section aria-label="Posts"><h3>Posts</h3>{searchResults.posts.map((post) => <PostCard key={post.id} post={post} onOpenProfile={onOpenProfile} onOpenArticle={onOpenArticle} />)}</section>}
             {!searchLoading && !searchError && searchResults.users.length === 0 && searchResults.posts.length === 0 && <div className="card empty-state"><h3>No matching members or posts</h3><p>Try another name or phrase. Results include active public profiles and approved posts.</p></div>}
-          </section> : user && searchQuery.trim().length === 1 ? <div className="card empty-state"><h3>Enter at least two characters to search</h3><p>Search active member profiles and approved posts.</p></div> : <PostFeed key={refreshKey} searchQuery={searchQuery} />}
+          </section> : user && searchQuery.trim().length === 1 ? <div className="card empty-state"><h3>Enter at least two characters to search</h3><p>Search active member profiles and approved posts.</p></div> : <PostFeed key={refreshKey} searchQuery={searchQuery} onOpenProfile={onOpenProfile} onOpenArticle={onOpenArticle} />}
         </section>
 
         <aside className="right-sidebar" aria-label="OpenVibe information">
           <section className="card moderation-feature">
             <BrandImage src="/images/post-ai.jpg" alt="A digital illustration about artificial intelligence" loading="lazy" />
             <div className="moderation-feature-body">
-              <span className="eyebrow">RESPONSIBLE AI</span>
-              <h2>Moderation you can inspect</h2>
-              <p>See the prediction, confidence, and rule-based indicators returned by the moderation service.</p>
+              <span className="eyebrow">OPENVIBE TOOLS</span>
+              <h2>Explore the text sandbox</h2>
+              <p>Try a sample and preview the tools available to community members.</p>
               <button type="button" className="text-link-button" onClick={() => setShowSandbox((shown) => !shown)} aria-expanded={showSandbox}>
-                <Sparkles size={15} /> {showSandbox ? 'Close the AI sandbox' : 'Try the AI sandbox'} <ArrowRight size={14} />
+                <Sparkles size={15} /> {showSandbox ? 'Close the sandbox' : 'Try the sandbox'} <ArrowRight size={14} />
               </button>
             </div>
           </section>
@@ -127,6 +132,8 @@ export const Home = ({ setActivePage, searchQuery = '', onSearch, onOpenProfile,
             <button type="button" className="quick-link" onClick={() => setActivePage('ai-transparency')}><Sparkles size={17} /><span>AI transparency</span><ArrowRight size={15} /></button>
             <button type="button" className="quick-link" onClick={() => setActivePage('terms')}><FileText size={17} /><span>Community terms</span><ArrowRight size={15} /></button>
             <button type="button" className="quick-link" onClick={() => setActivePage('privacy-policy')}><LockKeyhole size={17} /><span>Privacy policy</span><ArrowRight size={15} /></button>
+            <button type="button" className="quick-link" onClick={() => setActivePage('events')}><CalendarDays size={17} /><span>Community events</span><ArrowRight size={15} /></button>
+            <button type="button" className="quick-link" onClick={() => setActivePage('articles')}><BookOpen size={17} /><span>Member articles</span><ArrowRight size={15} /></button>
             <div className="privacy-mini-note"><Bookmark size={15} aria-hidden="true" /> This version does not run analytics or ad tracking.</div>
           </section>
 

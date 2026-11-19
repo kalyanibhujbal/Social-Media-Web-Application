@@ -59,17 +59,18 @@ export const Dashboard = () => {
     (stats?.total_posts || 0) + (stats?.total_comments || 0) > 0;
 
   return (
-    <main id="main-content" className="container" style={{ paddingTop: '2rem' }}>
-      <header className="card" style={{ marginBottom: '2rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
+    <main id="main-content" className="container page-shell dashboard-page">
+      <header className="card dashboard-header">
         <div>
-          <h1 style={{ fontSize: '1.5rem', color: '#f8fafc' }}>My moderation dashboard</h1>
-          <p style={{ color: '#94a3b8', fontSize: '0.9rem' }}>
-            Signed in as <strong style={{ color: '#f8fafc' }}>@{user.username}</strong>
+          <span className="eyebrow">YOUR OPENVIBE ACCOUNT</span>
+          <h1>My activity &amp; moderation</h1>
+          <p>
+            Signed in as <strong>@{user.username}</strong>
           </p>
         </div>
 
         {stats && (
-          <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }} role="group" aria-label="Moderation summary counts">
+          <div className="dashboard-stat-list" role="group" aria-label="Moderation summary counts">
             <StatChip label="Published" value={stats.approved_posts} tone="success" />
             <StatChip label="Pending review" value={stats.pending_review_posts} tone="flagged" />
             <StatChip label="Blocked" value={stats.blocked_posts} tone="danger" />
@@ -80,7 +81,7 @@ export const Dashboard = () => {
 
       <CreatePostForm onPostCreated={fetchDashboard} />
 
-      <nav aria-label="Dashboard sections" style={{ margin: '1.5rem 0', display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+      <nav aria-label="Dashboard sections" className="dashboard-sections">
         {[
           ['posts', 'My posts'],
           ['comments', 'My comments'],
@@ -97,18 +98,18 @@ export const Dashboard = () => {
             {label}
           </button>
         ))}
-        <button type="button" className="btn btn-secondary" onClick={fetchDashboard} style={{ marginLeft: 'auto' }}>
+        <button type="button" className="btn btn-secondary dashboard-refresh" onClick={fetchDashboard}>
           Refresh
         </button>
       </nav>
 
-      {loading && <p style={{ color: '#94a3b8' }} role="status">Loading your moderation data…</p>}
-      {error && <p style={{ color: '#f87171' }} role="alert">{error}</p>}
+      {loading && <p className="dashboard-loading" role="status">Loading your activity…</p>}
+      {error && <div className="notice-card notice-card-error" role="alert">{error}</div>}
 
       {!loading && !hasModerationData && (
-        <div className="card" style={{ textAlign: 'center', color: '#94a3b8', padding: '2.5rem' }} role="status">
-          <p style={{ fontSize: '1.1rem' }}>No moderation data available yet.</p>
-          <p style={{ fontSize: '0.85rem', marginTop: '0.5rem' }}>Create a post above to begin.</p>
+        <div className="card dashboard-empty" role="status">
+          <p>No activity to show yet.</p>
+          <p>Create a post above to get started.</p>
         </div>
       )}
 
@@ -118,8 +119,8 @@ export const Dashboard = () => {
             <div key={post.id}>
               <PostCard post={post} />
               {(post.moderation_status === 'BLOCKED' || post.moderation_status === 'FLAGGED_FOR_REVIEW') && (
-                <div style={{ marginTop: '-0.5rem', marginBottom: '1rem', paddingLeft: '0.5rem' }}>
-                  <button type="button" className="btn btn-secondary" style={{ fontSize: '0.8rem' }} onClick={() => handleAppeal(post.id)}>
+                <div className="dashboard-appeal-action">
+                  <button type="button" className="btn btn-secondary" onClick={() => handleAppeal(post.id)}>
                     Request review (appeal)
                   </button>
                 </div>
@@ -130,26 +131,26 @@ export const Dashboard = () => {
       )}
 
       {!loading && dashboard && activeSection === 'comments' && (
-        <section aria-label="My comments" className="card" style={{ padding: '1rem' }}>
-          <h2 style={{ fontSize: '1.15rem', marginBottom: '1rem', color: '#f8fafc' }}>My comments</h2>
+        <section aria-label="My comments" className="card dashboard-section-card">
+          <h2>My comments</h2>
           <UserCommentList comments={myComments} />
         </section>
       )}
 
       {!loading && dashboard && activeSection === 'pending' && (
-        <section aria-label="Pending review items" className="card" style={{ padding: '1rem' }}>
-          <h2 style={{ fontSize: '1.15rem', marginBottom: '1rem', color: '#f8fafc' }}>Pending review</h2>
+        <section aria-label="Pending review items" className="card dashboard-section-card">
+          <h2>Pending review</h2>
           <PendingReviewList items={dashboard.pending_items || []} />
         </section>
       )}
 
       {!loading && dashboard && activeSection === 'history' && (
-        <section aria-label="Moderation history" className="card" style={{ padding: '1rem' }}>
-          <h2 style={{ fontSize: '1.15rem', marginBottom: '1rem', color: '#f8fafc' }}>Moderation history</h2>
+        <section aria-label="Moderation history" className="card dashboard-section-card">
+          <h2>Moderation history</h2>
           {dashboard.moderation_history?.length ? (
             <ModerationHistoryTable history={dashboard.moderation_history} />
           ) : (
-            <p style={{ color: '#94a3b8' }} role="status">No moderation history available yet.</p>
+            <p className="dashboard-loading" role="status">No moderation history available yet.</p>
           )}
         </section>
       )}
@@ -158,18 +159,12 @@ export const Dashboard = () => {
 };
 
 function StatChip({ label, value, tone }) {
-  const colors = {
-    success: '#34d399',
-    flagged: '#c084fc',
-    danger: '#f87171',
-    neutral: '#f8fafc',
-  };
   return (
-    <div style={{ background: '#0f172a', padding: '0.5rem 1rem', borderRadius: '8px', textAlign: 'center', border: '1px solid #334155', minWidth: '88px' }}>
-      <div style={{ fontSize: '0.75rem', color: '#94a3b8' }}>{label}</div>
-      <div style={{ fontWeight: 'bold', color: colors[tone] || colors.neutral }} aria-label={`${label}: ${value}`}>
+    <div className={`dashboard-stat dashboard-stat-${tone}`}>
+      <span>{label}</span>
+      <strong aria-label={`${label}: ${value}`}>
         {value}
-      </div>
+      </strong>
     </div>
   );
 }

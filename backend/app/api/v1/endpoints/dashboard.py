@@ -138,8 +138,8 @@ async def get_user_dashboard(
                 "id": p["id"],
                 "content_preview": (p.get("content") or "")[:120],
                 "moderation_status": p["moderation_status"],
-                "prediction_label": p.get("ai_prediction", {}).get("label"),
-                "confidence": p.get("ai_prediction", {}).get("confidence"),
+                "prediction_label": (p.get("ai_prediction") or {}).get("label"),
+                "confidence": (p.get("ai_prediction") or {}).get("confidence"),
                 "created_at": p.get("created_at"),
             })
     for c in comments:
@@ -149,8 +149,8 @@ async def get_user_dashboard(
                 "id": c["id"],
                 "content_preview": (c.get("content") or "")[:120],
                 "moderation_status": c["moderation_status"],
-                "prediction_label": c.get("ai_prediction", {}).get("label"),
-                "confidence": c.get("ai_prediction", {}).get("confidence"),
+                "prediction_label": (c.get("ai_prediction") or {}).get("label"),
+                "confidence": (c.get("ai_prediction") or {}).get("confidence"),
                 "created_at": c.get("created_at"),
             })
 

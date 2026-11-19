@@ -26,6 +26,29 @@ const getErrorMessage = (detail, fallback) => {
   return messages.length ? [...new Set(messages)].join(' ') : fallback;
 };
 
+const uploadForm = (path, formData, onProgress, method = 'POST') => new Promise((resolve, reject) => {
+  const xhr = new XMLHttpRequest();
+  xhr.open(method, `${API_BASE_URL}${path}`);
+  xhr.withCredentials = true;
+  xhr.setRequestHeader('Accept', 'application/json');
+  xhr.upload.onprogress = (event) => {
+    if (event.lengthComputable) onProgress?.(Math.round((event.loaded / event.total) * 100));
+  };
+  xhr.onerror = () => reject(new Error('OpenVibe could not reach the server. Check your connection and try again.'));
+  xhr.onload = () => {
+    let response;
+    try { response = JSON.parse(xhr.responseText); }
+    catch { response = {}; }
+    if (xhr.status < 200 || xhr.status >= 300) {
+      reject(new Error(getErrorMessage(response.detail, 'The upload could not be completed.')));
+      return;
+    }
+    onProgress?.(100);
+    resolve(response);
+  };
+  xhr.send(formData);
+});
+
 export const api = {
   // Auth
   register: async (username, email, password, termsAccepted, fullName = '') => {
@@ -39,6 +62,12 @@ export const api = {
       const err = await res.json();
       throw new Error(getErrorMessage(err.detail, 'Registration failed'));
     }
+    return res.json();
+  },
+
+  listExplorePosts: async () => {
+    const res = await fetch(`${API_BASE_URL}/posts/explore`, { credentials: 'include', headers: getHeaders() });
+    if (!res.ok) throw new Error('Could not load Explore posts');
     return res.json();
   },
 
@@ -56,6 +85,28 @@ export const api = {
     return res.json();
   },
 
+  getFollowRequests: async () => {
+    const res = await fetch(`${API_BASE_URL}/follows/requests`, { credentials: 'include', headers: getHeaders() });
+    if (!res.ok) throw new Error('Could not load follow requests');
+    return res.json();
+  },
+
+  acceptFollowRequest: async (followerId) => {
+    const res = await fetch(`${API_BASE_URL}/follows/requests/${encodeURIComponent(followerId)}/accept`, {
+      method: 'POST', credentials: 'include', headers: getHeaders(),
+    });
+    if (!res.ok) { const err = await res.json(); throw new Error(err.detail || 'Could not accept follow request'); }
+    return res.json();
+  },
+
+  rejectFollowRequest: async (followerId) => {
+    const res = await fetch(`${API_BASE_URL}/follows/requests/${encodeURIComponent(followerId)}/reject`, {
+      method: 'POST', credentials: 'include', headers: getHeaders(),
+    });
+    if (!res.ok) { const err = await res.json(); throw new Error(err.detail || 'Could not reject follow request'); }
+    return res.json();
+  },
+
   getMe: async () => {
     const res = await fetch(`${API_BASE_URL}/auth/me`, {
       credentials: 'include',
@@ -65,12 +116,12 @@ export const api = {
     return res.json();
   },
 
-  updateProfile: async ({ username, email, currentPassword, fullName, headline, location, about, skills }) => {
+  updateProfile: async ({ username, email, currentPassword, fullName, headline, location, about, skills, isPrivate }) => {
     const res = await fetch(`${API_BASE_URL}/auth/profile`, {
       method: 'PATCH', credentials: 'include', headers: getHeaders(),
       body: JSON.stringify({
         username, email, full_name: fullName, headline, location, about, skills,
-        current_password: currentPassword,
+        current_password: currentPassword, is_private: isPrivate,
       })
     });
     if (!res.ok) {
@@ -104,9 +155,68 @@ export const api = {
     return res.json();
   },
 
-  listPosts: async (statusFilter = null) => {
+  createMediaPost: async (caption, files, onProgress) => {
+    const formData = new FormData();
+    formData.append('caption', caption);
+    files.forEach((file) => formData.append('files', file));
+    return uploadForm('/posts/media', formData, onProgress);
+  },
+
+  createEvent: async ({ title, description, eventDate, eventTime, location, coverImage }, onProgress) => {
+    const formData = new FormData();
+    formData.append('title', title);
+    formData.append('description', description);
+    formData.append('event_date', eventDate);
+    formData.append('event_time', eventTime);
+    formData.append('location', location);
+    if (coverImage) formData.append('cover_image', coverImage);
+    return uploadForm('/posts/events', formData, onProgress);
+  },
+
+  createArticle: async ({ title, content, coverImage }, onProgress) => {
+    const formData = new FormData();
+    formData.append('title', title);
+    formData.append('content', content);
+    if (coverImage) formData.append('cover_image', coverImage);
+    return uploadForm('/posts/articles', formData, onProgress);
+  },
+
+  updateArticle: async (postId, { title, content, coverImage }, onProgress) => {
+    const formData = new FormData();
+    formData.append('title', title);
+    formData.append('content', content);
+    if (coverImage) formData.append('cover_image', coverImage);
+    return uploadForm(`/posts/${encodeURIComponent(postId)}/article`, formData, onProgress, 'PUT');
+  },
+
+  deletePost: async (postId) => {
+    const res = await fetch(`${API_BASE_URL}/posts/${encodeURIComponent(postId)}`, {
+      method: 'DELETE', credentials: 'include', headers: getHeaders(),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(getErrorMessage(err.detail, 'Could not delete this post.'));
+    }
+    return res.json();
+  },
+
+  deletePostMedia: async (postId, filename) => {
+    const res = await fetch(`${API_BASE_URL}/posts/${encodeURIComponent(postId)}/media/${encodeURIComponent(filename)}`, {
+      method: 'DELETE', credentials: 'include', headers: getHeaders(),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(getErrorMessage(err.detail, 'Could not remove this media.'));
+    }
+    return res.json();
+  },
+
+  mediaUrl: (path) => new URL(path, API_BASE_URL).href,
+
+  listPosts: async (statusFilter = null, contentType = null) => {
     let url = `${API_BASE_URL}/posts`;
     if (statusFilter) url += `?status_filter=${statusFilter}`;
+    if (contentType) url += `${statusFilter ? '&' : '?'}content_type=${encodeURIComponent(contentType)}`;
     const res = await fetch(url, { credentials: 'include', headers: getHeaders() });
     if (!res.ok) throw new Error('Failed to fetch posts');
     return res.json();
@@ -197,12 +307,12 @@ export const api = {
   },
 
   // Comments
-  createComment: async (postId, content) => {
+  createComment: async (postId, content, parentCommentId = null) => {
     const res = await fetch(`${API_BASE_URL}/comments`, {
       method: 'POST',
       credentials: 'include',
       headers: getHeaders(),
-      body: JSON.stringify({ post_id: postId, content })
+      body: JSON.stringify({ post_id: postId, content, parent_comment_id: parentCommentId })
     });
     if (!res.ok) {
       const err = await res.json();

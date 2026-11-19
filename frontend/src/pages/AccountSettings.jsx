@@ -15,6 +15,7 @@ export const AccountSettings = () => {
   const [location, setLocation] = useState(user?.location || '');
   const [about, setAbout] = useState(user?.about || '');
   const [skills, setSkills] = useState((user?.skills || []).join(', '));
+  const [isPrivate, setIsPrivate] = useState(Boolean(user?.is_private));
   const [currentPassword, setCurrentPassword] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -55,7 +56,7 @@ export const AccountSettings = () => {
     setError('');
     setMsg('');
     try {
-      await updateProfile({ username, email, currentPassword, fullName, headline, location, about, skills: skills.split(',').map((item) => item.trim()).filter(Boolean) });
+      await updateProfile({ username, email, currentPassword, fullName, headline, location, about, skills: skills.split(',').map((item) => item.trim()).filter(Boolean), isPrivate });
       setCurrentPassword('');
       setMsg('Account information updated.');
     } catch (err) {
@@ -109,6 +110,14 @@ export const AccountSettings = () => {
             <label htmlFor="settings-skills" className="form-label">Skills <span className="muted-note">(comma-separated, up to 20)</span></label>
             <input id="settings-skills" className="form-input" value={skills} onChange={(event) => setSkills(event.target.value)} placeholder="React, Python, NLP" />
           </div>
+          <fieldset className="form-group privacy-setting-card">
+            <legend className="form-label">Account visibility</legend>
+            <label htmlFor="settings-private-account" className="privacy-setting-option">
+              <input id="settings-private-account" type="checkbox" checked={isPrivate} onChange={(event) => setIsPrivate(event.target.checked)} />
+              <span><strong>Private account</strong><small>{isPrivate ? 'Only approved followers can view your posts and full profile details. New follows require your approval.' : 'Your profile and approved posts are visible to everyone. New followers are added immediately.'}</small></span>
+            </label>
+            <p className="form-help">Changes are saved with the profile form below and require your current password.</p>
+          </fieldset>
           <div className="form-group">
             <label htmlFor="settings-password" className="form-label">Current password (to confirm changes)</label>
             <input id="settings-password" type="password" className="form-input" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} minLength={8} maxLength={100} required />

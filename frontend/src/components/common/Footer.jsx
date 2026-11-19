@@ -13,14 +13,14 @@ export const Footer = ({ setActivePage }) => (
       <div className="footer-grid">
         <div className="footer-brand-column">
           <OpenVibeLogo size={27} />
-          <p>Connect. Share. Engage. Responsibly.<br />A social platform prototype with AI-assisted moderation and privacy controls.</p>
+          <p>Connect. Share. Engage. Responsibly.<br />A professional network for ideas, knowledge, and community.</p>
         </div>
         {links.map((group) => <section className="footer-column" key={group.title}>
           <h2>{group.title}</h2>
           <ul>{group.items.map(([label, page]) => <li key={page}><button type="button" onClick={() => setActivePage(page)}>{label}</button></li>)}</ul>
         </section>)}
       </div>
-      <div className="footer-bottom"><span>© 2026 OpenVibe</span><span>Project demonstration · AI predictions can be inaccurate</span></div>
+      <div className="footer-bottom"><span>© 2026 OpenVibe</span><span>Project demonstration</span></div>
     </div>
   </footer>
 );

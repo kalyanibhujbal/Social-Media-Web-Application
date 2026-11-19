@@ -16,6 +16,19 @@ class PublicProfile(BaseModel):
     follower_count: int = 0
     following_count: int = 0
     relationship: str = "NONE"
+    follow_status: str = "NONE"
+    is_private: bool = False
+    profile_restricted: bool = False
+    avatar_url: Optional[str] = None
+
+
+class FollowRequestSummary(BaseModel):
+    id: str
+    follower_id: str
+    following_id: str
+    status: str
+    created_at: str
+    other_user: PublicProfile
 
 
 class ConnectionRequestCreate(BaseModel):

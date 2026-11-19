@@ -2,7 +2,7 @@ import React, { useCallback, useContext, useEffect, useState } from 'react';
 import { AuthContext } from '../context/AuthContext';
 import { api } from '../services/api';
 import { Avatar } from '../components/common/Avatar';
-import { AlertCircle, Check, Info, LoaderCircle, UserRoundPlus, UsersRound, X } from 'lucide-react';
+import { AlertCircle, Check, Info, LoaderCircle, LockKeyhole, UserRoundPlus, UsersRound, X } from 'lucide-react';
 
 const displayName = (person) => person.full_name || person.username;
 
@@ -10,6 +10,7 @@ export const MyNetwork = ({ setActivePage, onOpenProfile }) => {
   const { user } = useContext(AuthContext);
   const [suggestions, setSuggestions] = useState([]);
   const [requests, setRequests] = useState({ incoming: [], outgoing: [] });
+  const [followRequests, setFollowRequests] = useState({ incoming: [], outgoing: [] });
   const [connections, setConnections] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -21,12 +22,13 @@ export const MyNetwork = ({ setActivePage, onOpenProfile }) => {
     setLoading(true);
     setError('');
     try {
-      const [people, invitations, accepted] = await Promise.all([
-        api.getConnectionSuggestions(), api.getConnectionRequests(), api.getConnections(),
+      const [people, invitations, accepted, follows] = await Promise.all([
+        api.getConnectionSuggestions(), api.getConnectionRequests(), api.getConnections(), api.getFollowRequests(),
       ]);
       setSuggestions(people);
       setRequests(invitations);
       setConnections(accepted);
+      setFollowRequests(follows);
     } catch (err) {
       setError(err.message || 'Your network could not be loaded. Please try again.');
     } finally {
@@ -60,6 +62,12 @@ export const MyNetwork = ({ setActivePage, onOpenProfile }) => {
       <section className="card network-section" aria-labelledby="invitations-heading">
         <div className="section-heading-row"><div><h2 id="invitations-heading">Invitations</h2><p>Connection requests sent to you.</p></div><span className="count-pill">{requests.incoming.length} pending</span></div>
         {loading ? <p className="loading-state" role="status"><LoaderCircle className="spin" size={17} /> Loading invitations…</p> : requests.incoming.length === 0 ? <div className="network-empty-state"><span className="empty-icon"><UserRoundPlus size={21} /></span><div><strong>No invitations yet</strong><p>New requests will appear here.</p></div></div> : <div className="invitation-list">{requests.incoming.map((request) => <article className="invitation-row" key={request.id}><button type="button" className="profile-inline-button" onClick={() => onOpenProfile?.(request.other_user.id)}><Avatar name={displayName(request.other_user)} size="lg" /><span><strong>{displayName(request.other_user)}</strong><small>{request.other_user.headline || `@${request.other_user.username}`}</small></span></button><div className="invitation-actions"><button type="button" className="btn btn-primary btn-sm" disabled={busyId === request.id} onClick={() => runAction(request.id, () => api.acceptConnection(request.id))}><Check size={15} /> Accept</button><button type="button" className="btn btn-secondary btn-sm" disabled={busyId === request.id} onClick={() => runAction(request.id, () => api.rejectConnection(request.id))}><X size={15} /> Ignore</button></div></article>)}</div>}
+      </section>
+
+      <section className="card network-section" aria-labelledby="follow-requests-heading">
+        <div className="section-heading-row"><div><h2 id="follow-requests-heading">Private account follow requests</h2><p>Approve requests to let members view your private posts and profile details.</p></div><span className="count-pill">{followRequests.incoming.length} pending</span></div>
+        {loading ? <p className="loading-state" role="status"><LoaderCircle className="spin" size={17} /> Loading follow requests…</p> : followRequests.incoming.length === 0 ? <div className="network-empty-state"><span className="empty-icon"><LockKeyhole size={21} /></span><div><strong>No follow requests</strong><p>Requests to follow your private account will appear here.</p></div></div> : <div className="invitation-list">{followRequests.incoming.map((request) => <article className="invitation-row" key={request.id}><button type="button" className="profile-inline-button" onClick={() => onOpenProfile?.(request.other_user.id)}><Avatar name={displayName(request.other_user)} src={request.other_user.avatar_url} size="lg" /><span><strong>{displayName(request.other_user)}</strong><small>{request.other_user.headline || `@${request.other_user.username}`}</small></span></button><div className="invitation-actions"><button type="button" className="btn btn-primary btn-sm" disabled={busyId === request.id} onClick={() => runAction(request.id, () => api.acceptFollowRequest(request.other_user.id))}><Check size={15} /> Accept</button><button type="button" className="btn btn-secondary btn-sm" disabled={busyId === request.id} onClick={() => runAction(request.id, () => api.rejectFollowRequest(request.other_user.id))}><X size={15} /> Reject</button></div></article>)}</div>}
+        {followRequests.outgoing.length > 0 && <div className="invitation-list"><h3 className="follow-request-subheading">Requests you sent</h3>{followRequests.outgoing.map((request) => <article className="invitation-row" key={request.id}><button type="button" className="profile-inline-button" onClick={() => onOpenProfile?.(request.other_user.id)}><Avatar name={displayName(request.other_user)} src={request.other_user.avatar_url} size="md" /><span><strong>{displayName(request.other_user)}</strong><small>@{request.other_user.username}</small></span></button><span className="preview-pill">Awaiting approval</span></article>)}</div>}
       </section>
 
       {requests.outgoing.length > 0 && <section className="card network-section" aria-labelledby="sent-heading"><div className="section-heading-row"><div><h2 id="sent-heading">Sent invitations</h2><p>Requests waiting for a response.</p></div><span className="count-pill">{requests.outgoing.length}</span></div><div className="invitation-list">{requests.outgoing.map((request) => <article className="invitation-row" key={request.id}><button type="button" className="profile-inline-button" onClick={() => onOpenProfile?.(request.other_user.id)}><Avatar name={displayName(request.other_user)} size="lg" /><span><strong>{displayName(request.other_user)}</strong><small>{request.other_user.headline || `@${request.other_user.username}`}</small></span></button><span className="preview-pill">Pending</span></article>)}</div></section>}

@@ -5,13 +5,16 @@ from app.schemas.post import AIPrediction
 class CommentCreate(BaseModel):
     post_id: str = Field(..., description="Target post ID")
     content: str = Field(..., min_length=1, max_length=1000, description="Comment text content")
+    parent_comment_id: Optional[str] = Field(None, min_length=1, max_length=80, description="Comment being replied to")
 
 class CommentResponse(BaseModel):
     id: str
     post_id: str
+    parent_comment_id: Optional[str] = None
     author_id: str
     author_username: str
     author_full_name: Optional[str] = None
+    author_avatar_url: Optional[str] = None
     content: str
     language: str
     language_supported: Optional[bool] = None

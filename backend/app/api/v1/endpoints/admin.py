@@ -68,7 +68,7 @@ async def _moderation_logs(limit: int | None = 200) -> List[dict]:
 def _confidence_distribution(items: List[dict]) -> List[ConfidenceBucket]:
     high = medium = low = 0
     for item in items:
-        conf = item.get("ai_prediction", {}).get("confidence")
+        conf = (item.get("ai_prediction") or {}).get("confidence")
         if conf is None:
             continue
         if conf >= 0.8:
@@ -422,9 +422,9 @@ async def get_analytics(request: Request, admin: dict = Depends(require_admin)):
     flagged = sum(1 for item in all_items if item.get("moderation_status") == "FLAGGED_FOR_REVIEW")
     blocked = sum(1 for item in all_items if item.get("moderation_status") == "BLOCKED")
 
-    hate = sum(1 for item in all_items if item.get("ai_prediction", {}).get("label") == "Hate Speech")
-    offensive = sum(1 for item in all_items if item.get("ai_prediction", {}).get("label") == "Offensive")
-    normal = sum(1 for item in all_items if item.get("ai_prediction", {}).get("label") == "Normal")
+    hate = sum(1 for item in all_items if (item.get("ai_prediction") or {}).get("label") == "Hate Speech")
+    offensive = sum(1 for item in all_items if (item.get("ai_prediction") or {}).get("label") == "Offensive")
+    normal = sum(1 for item in all_items if (item.get("ai_prediction") or {}).get("label") == "Normal")
 
     overrides = sum(
         1 for log in all_logs

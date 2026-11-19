@@ -17,6 +17,7 @@ __pycache__/
 # Node dependencies and generated frontend output
 node_modules/
 frontend/dist/
+backend/media_uploads/
 
 # Editor and operating-system files
 .vscode/

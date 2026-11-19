@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 from pydantic import Field
 from pydantic_settings import BaseSettings
 from typing import List, Optional
@@ -13,6 +14,7 @@ class Settings(BaseSettings):
     # Database
     MONGODB_URL: str = "mongodb://localhost:27017"
     MONGODB_DB_NAME: str = "social_moderation_db"
+    MEDIA_ROOT: Path = Path(__file__).resolve().parents[2] / "media_uploads"
 
     # JWT Security
     JWT_SECRET: str = "DEFAULT_INSECURE_SECRET_CHANGE_IN_PRODUCTION_ENV_MIN_32"

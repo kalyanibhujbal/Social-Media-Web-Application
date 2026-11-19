@@ -41,6 +41,8 @@ class UserResponse(BaseModel):
     location: Optional[str] = None
     about: Optional[str] = None
     skills: List[str] = Field(default_factory=list)
+    is_private: bool = False
+    avatar_url: Optional[str] = None
 
 class ProfileUpdateRequest(BaseModel):
     username: Optional[str] = Field(None, min_length=3, max_length=30)
@@ -50,6 +52,7 @@ class ProfileUpdateRequest(BaseModel):
     location: Optional[str] = Field(None, max_length=120)
     about: Optional[str] = Field(None, max_length=1000)
     skills: Optional[List[str]] = Field(None, max_length=20)
+    is_private: Optional[bool] = None
     current_password: str = Field(..., min_length=8, max_length=100)
 
     @field_validator("skills")

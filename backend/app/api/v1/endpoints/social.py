@@ -12,6 +12,7 @@ from app.schemas.social import (
     ConnectionRequestCreate,
     ConnectionSummary,
     ConversationCreate,
+    FollowRequestSummary,
     MessageCreate,
     MessageResponse,
     NotificationResponse,
@@ -21,6 +22,7 @@ from app.schemas.post import PostResponse
 from app.services.audit_logger import audit_logger
 from app.services.notifications import create_notification
 from app.services.sanitizer import InputSanitizer
+from app.services.social_access import can_view_profile_content, visible_author_ids
 
 router = APIRouter()
 
@@ -57,16 +59,19 @@ async def _get_user(user_id: str):
     return await _find_one("users", {"id": user_id}, lambda row: row.get("id") == user_id)
 
 
-def _public_user(user: dict) -> dict[str, Any]:
+def _public_user(user: dict, *, include_profile_content: bool = True) -> dict[str, Any]:
     return {
         "id": user["id"],
         "username": user["username"],
         "full_name": user.get("full_name"),
-        "headline": user.get("headline"),
-        "location": user.get("location"),
-        "about": user.get("about"),
-        "skills": user.get("skills", []),
+        "headline": user.get("headline") if include_profile_content else None,
+        "location": user.get("location") if include_profile_content else None,
+        "about": user.get("about") if include_profile_content else None,
+        "skills": user.get("skills", []) if include_profile_content else [],
         "created_at": user["created_at"],
+        "is_private": user.get("is_private", False),
+        "profile_restricted": bool(user.get("is_private", False) and not include_profile_content),
+        "avatar_url": user.get("avatar_url") if include_profile_content else None,
     }
 
 
@@ -79,24 +84,45 @@ async def _relationship_summary(viewer_id: str, other_id: str) -> str:
         if connection.get("status") == "PENDING":
             return "REQUEST_SENT" if connection.get("requester_id") == viewer_id else "REQUEST_RECEIVED"
     follows = await _find_one("follows", {"follower_id": viewer_id, "following_id": other_id}, lambda row: row.get("follower_id") == viewer_id and row.get("following_id") == other_id)
-    return "FOLLOWING" if follows else "NONE"
+    if follows and follows.get("status", "ACCEPTED") == "ACCEPTED":
+        return "FOLLOWING"
+    if follows and follows.get("status") == "PENDING":
+        return "REQUEST_SENT"
+    incoming = await _find_one("follows", {"follower_id": other_id, "following_id": viewer_id, "status": "PENDING"}, lambda row: row.get("follower_id") == other_id and row.get("following_id") == viewer_id and row.get("status") == "PENDING")
+    return "REQUEST_RECEIVED" if incoming else "NONE"
 
 
 async def _profile(user: dict, viewer_id: str | None = None) -> PublicProfile:
     user_id = user["id"]
+    can_view_content = await can_view_profile_content(user, viewer_id)
     if db_manager.use_mongo and db_manager.db is not None:
         connections = await db_manager.db["connections"].count_documents({"$or": [{"requester_id": user_id}, {"recipient_id": user_id}], "status": "ACCEPTED"})
     else:
         connections = sum(1 for row in db_manager._collections["connections"] if user_id in {row.get("requester_id"), row.get("recipient_id")} and row.get("status") == "ACCEPTED")
-    followers = await _count("follows", {"following_id": user_id}, lambda row: row.get("following_id") == user_id)
-    following = await _count("follows", {"follower_id": user_id}, lambda row: row.get("follower_id") == user_id)
+    accepted_status = {"$or": [{"status": "ACCEPTED"}, {"status": {"$exists": False}}]}
+    followers = await _count("follows", {"following_id": user_id, **accepted_status}, lambda row: row.get("following_id") == user_id and row.get("status", "ACCEPTED") == "ACCEPTED")
+    following = await _count("follows", {"follower_id": user_id, **accepted_status}, lambda row: row.get("follower_id") == user_id and row.get("status", "ACCEPTED") == "ACCEPTED")
     relationship = await _relationship_summary(viewer_id, user_id) if viewer_id and viewer_id != user_id else "SELF" if viewer_id == user_id else "NONE"
+    follow_status = "NONE"
+    if viewer_id == user_id:
+        follow_status = "SELF"
+    elif viewer_id:
+        outgoing = await _find_one("follows", {"follower_id": viewer_id, "following_id": user_id}, lambda row: row.get("follower_id") == viewer_id and row.get("following_id") == user_id)
+        incoming = await _find_one("follows", {"follower_id": user_id, "following_id": viewer_id}, lambda row: row.get("follower_id") == user_id and row.get("following_id") == viewer_id)
+        if outgoing and outgoing.get("status", "ACCEPTED") == "ACCEPTED":
+            follow_status = "FOLLOWING"
+        elif outgoing and outgoing.get("status") == "PENDING":
+            follow_status = "REQUEST_SENT"
+        elif incoming and incoming.get("status") == "PENDING":
+            follow_status = "REQUEST_RECEIVED"
+    profile_data = _public_user(user, include_profile_content=can_view_content)
     return PublicProfile(**{
-        **_public_user(user),
-        "connection_count": connections,
-        "follower_count": followers,
-        "following_count": following,
+        **profile_data,
+        "connection_count": connections if can_view_content else 0,
+        "follower_count": followers if can_view_content else 0,
+        "following_count": following if can_view_content else 0,
         "relationship": relationship,
+        "follow_status": follow_status,
     })
 
 
@@ -112,10 +138,24 @@ async def search_users(
     if len(query) < 2:
         return []
     escaped = re.escape(query)
+    visible_profiles = await visible_author_ids(current_user["id"])
+    searchable_fields = [
+        {"username": {"$regex": escaped, "$options": "i"}},
+        {"full_name": {"$regex": escaped, "$options": "i"}},
+        {"$and": [{"is_private": {"$ne": True}}, {"headline": {"$regex": escaped, "$options": "i"}}]},
+        {"$and": [{"is_private": True}, {"id": {"$in": list(visible_profiles)}}, {"headline": {"$regex": escaped, "$options": "i"}}]},
+    ]
     rows = await _find_many(
         "users",
-        {"is_active": {"$ne": False}, "$or": [{"username": {"$regex": escaped, "$options": "i"}}, {"full_name": {"$regex": escaped, "$options": "i"}}, {"headline": {"$regex": escaped, "$options": "i"}}]},
-        lambda row: row.get("is_active", True) and any(query.lower() in str(row.get(field) or "").lower() for field in ("username", "full_name", "headline")),
+        {"is_active": {"$ne": False}, "$or": searchable_fields},
+        lambda row: row.get("is_active", True) and (
+            query.lower() in str(row.get("username") or "").lower()
+            or query.lower() in str(row.get("full_name") or "").lower()
+            or (
+                row.get("id") in visible_profiles
+                and query.lower() in str(row.get("headline") or "").lower()
+            )
+        ),
         sort_key="username", limit=20,
     )
     return [await _profile(user, current_user["id"]) for user in rows if user["id"] != current_user["id"]]
@@ -130,12 +170,18 @@ async def get_public_profile(user_id: str, current_user: dict | None = Depends(g
 
 
 @router.get("/users/{user_id}/posts", response_model=list[PostResponse])
-async def get_public_user_posts(user_id: str, request: Request):
+async def get_public_user_posts(
+    user_id: str,
+    request: Request,
+    current_user: dict | None = Depends(get_optional_current_user),
+):
     client_ip = request.client.host if request.client else "unknown"
     rate_limit_check(client_ip, max_requests=60, window_seconds=60)
     user = await _get_user(user_id)
     if not user or not user.get("is_active", True):
         raise HTTPException(status_code=404, detail="Profile not found.")
+    if not await can_view_profile_content(user, current_user.get("id") if current_user else None):
+        raise HTTPException(status_code=403, detail="Follow this private account and wait for approval to view its posts.")
     rows = await _find_many(
         "posts", {"author_id": user_id, "moderation_status": "APPROVED"},
         lambda row: row.get("author_id") == user_id and row.get("moderation_status") == "APPROVED",
@@ -287,41 +333,133 @@ async def follow_user(target_user_id: str, request: Request, current_user: dict 
     if me == target_user_id:
         raise HTTPException(status_code=400, detail="You cannot follow your own account.")
     now = _now()
-    row = {"id": str(uuid.uuid4()), "follower_id": me, "following_id": target_user_id, "created_at": now}
-    created = False
-    if db_manager.use_mongo and db_manager.db is not None:
-        result = await db_manager.db["follows"].update_one({"follower_id": me, "following_id": target_user_id}, {"$setOnInsert": row}, upsert=True)
-        created = result.upserted_id is not None
+    existing = await _find_one(
+        "follows",
+        {"follower_id": me, "following_id": target_user_id},
+        lambda item: item.get("follower_id") == me and item.get("following_id") == target_user_id,
+    )
+    requested_status = "PENDING" if target.get("is_private", False) else "ACCEPTED"
+    if existing and existing.get("status", "ACCEPTED") in {"ACCEPTED", "PENDING"}:
+        final_status = existing.get("status", "ACCEPTED")
+        count = await _count("follows", {"following_id": target_user_id, "$or": [{"status": "ACCEPTED"}, {"status": {"$exists": False}}]}, lambda item: item.get("following_id") == target_user_id and item.get("status", "ACCEPTED") == "ACCEPTED")
+        return {"following": final_status == "ACCEPTED", "status": final_status, "follower_count": count}
+
+    if existing:
+        row = existing
+        row.update({"status": requested_status, "updated_at": now})
+        if db_manager.use_mongo and db_manager.db is not None:
+            await db_manager.db["follows"].update_one(
+                {"id": row["id"], "follower_id": me, "following_id": target_user_id},
+                {"$set": {"status": requested_status, "updated_at": now}},
+            )
     else:
-        created = not any(item.get("follower_id") == me and item.get("following_id") == target_user_id for item in db_manager._collections["follows"])
-        if created:
+        row = {
+            "id": str(uuid.uuid4()),
+            "follower_id": me,
+            "following_id": target_user_id,
+            "status": requested_status,
+            "created_at": now,
+            "updated_at": now,
+        }
+        if db_manager.use_mongo and db_manager.db is not None:
+            await db_manager.db["follows"].insert_one(row)
+        else:
             db_manager._collections["follows"].append(row)
-    if created:
+    if requested_status == "PENDING":
+        await create_notification(target_user_id, "FOLLOW_REQUEST", me, current_user["username"], "user", me)
+    else:
         await create_notification(target_user_id, "FOLLOW", me, current_user["username"], "user", me)
-        await audit_logger.log_event(me, current_user["role"], "USER_FOLLOWED", "A member followed another account.", target_user_id)
-    count = await _count("follows", {"following_id": target_user_id}, lambda item: item.get("following_id") == target_user_id)
-    return {"following": True, "follower_count": count}
+    await audit_logger.log_event(me, current_user["role"], "USER_FOLLOWED" if requested_status == "ACCEPTED" else "FOLLOW_REQUESTED", "A member followed or requested to follow an account.", target_user_id)
+    count = await _count("follows", {"following_id": target_user_id, "$or": [{"status": "ACCEPTED"}, {"status": {"$exists": False}}]}, lambda item: item.get("following_id") == target_user_id and item.get("status", "ACCEPTED") == "ACCEPTED")
+    return {"following": requested_status == "ACCEPTED", "status": requested_status, "follower_count": count}
+
+
+@router.get("/follows/requests")
+async def list_follow_requests(current_user: dict = Depends(get_current_user)):
+    me = current_user["id"]
+    rows = await _find_many(
+        "follows",
+        {"$or": [{"follower_id": me}, {"following_id": me}], "status": "PENDING"},
+        lambda row: row.get("status") == "PENDING" and me in {row.get("follower_id"), row.get("following_id")},
+        sort_key="created_at",
+        reverse=True,
+        limit=200,
+    )
+    incoming, outgoing = [], []
+    for row in rows:
+        other_id = row["follower_id"] if row["following_id"] == me else row["following_id"]
+        other = await _get_user(other_id)
+        if not other or not other.get("is_active", True):
+            continue
+        item = FollowRequestSummary(**{**row, "other_user": await _profile(other, me)})
+        (incoming if row["following_id"] == me else outgoing).append(item)
+    return {"incoming": incoming, "outgoing": outgoing}
+
+
+@router.post("/follows/requests/{follower_id}/accept")
+async def accept_follow_request(follower_id: str, current_user: dict = Depends(get_current_user)):
+    me = current_user["id"]
+    row = await _find_one(
+        "follows",
+        {"follower_id": follower_id, "following_id": me, "status": "PENDING"},
+        lambda item: item.get("follower_id") == follower_id and item.get("following_id") == me and item.get("status") == "PENDING",
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Pending follow request not found.")
+    now = _now()
+    row.update({"status": "ACCEPTED", "updated_at": now})
+    if db_manager.use_mongo and db_manager.db is not None:
+        await db_manager.db["follows"].update_one(
+            {"id": row["id"], "follower_id": follower_id, "following_id": me, "status": "PENDING"},
+            {"$set": {"status": "ACCEPTED", "updated_at": now}},
+        )
+    await create_notification(follower_id, "FOLLOW_ACCEPTED", me, current_user["username"], "user", me)
+    await audit_logger.log_event(me, current_user["role"], "FOLLOW_REQUEST_ACCEPTED", "A follow request was accepted.", row["id"])
+    count = await _count("follows", {"following_id": me, "$or": [{"status": "ACCEPTED"}, {"status": {"$exists": False}}]}, lambda item: item.get("following_id") == me and item.get("status", "ACCEPTED") == "ACCEPTED")
+    return {"status": "ACCEPTED", "following": True, "follower_count": count}
+
+
+@router.post("/follows/requests/{follower_id}/reject")
+async def reject_follow_request(follower_id: str, current_user: dict = Depends(get_current_user)):
+    me = current_user["id"]
+    row = await _find_one(
+        "follows",
+        {"follower_id": follower_id, "following_id": me, "status": "PENDING"},
+        lambda item: item.get("follower_id") == follower_id and item.get("following_id") == me and item.get("status") == "PENDING",
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Pending follow request not found.")
+    now = _now()
+    row.update({"status": "REJECTED", "updated_at": now})
+    if db_manager.use_mongo and db_manager.db is not None:
+        await db_manager.db["follows"].update_one(
+            {"id": row["id"], "follower_id": follower_id, "following_id": me, "status": "PENDING"},
+            {"$set": {"status": "REJECTED", "updated_at": now}},
+        )
+    await audit_logger.log_event(me, current_user["role"], "FOLLOW_REQUEST_REJECTED", "A follow request was rejected.", row["id"])
+    return {"status": "REJECTED"}
 
 
 @router.delete("/follows/{target_user_id}")
 async def unfollow_user(target_user_id: str, current_user: dict = Depends(get_current_user)):
     me = current_user["id"]
     if db_manager.use_mongo and db_manager.db is not None:
-        await db_manager.db["follows"].delete_one({"follower_id": me, "following_id": target_user_id})
+        await db_manager.db["follows"].delete_one({"follower_id": me, "following_id": target_user_id, "$or": [{"status": "ACCEPTED"}, {"status": {"$exists": False}}]})
     else:
         db_manager._collections["follows"] = [
             item for item in db_manager._collections["follows"]
-            if not (item.get("follower_id") == me and item.get("following_id") == target_user_id)
+            if not (item.get("follower_id") == me and item.get("following_id") == target_user_id and item.get("status", "ACCEPTED") == "ACCEPTED")
         ]
-    count = await _count("follows", {"following_id": target_user_id}, lambda item: item.get("following_id") == target_user_id)
+    count = await _count("follows", {"following_id": target_user_id, "$or": [{"status": "ACCEPTED"}, {"status": {"$exists": False}}]}, lambda item: item.get("following_id") == target_user_id and item.get("status", "ACCEPTED") == "ACCEPTED")
     return {"following": False, "follower_count": count}
 
 
 @router.get("/follows/me")
 async def get_my_follows(current_user: dict = Depends(get_current_user)):
     me = current_user["id"]
-    following_rows = await _find_many("follows", {"follower_id": me}, lambda row: row.get("follower_id") == me, sort_key="created_at", reverse=True, limit=200)
-    follower_rows = await _find_many("follows", {"following_id": me}, lambda row: row.get("following_id") == me, sort_key="created_at", reverse=True, limit=200)
+    accepted_status = {"$or": [{"status": "ACCEPTED"}, {"status": {"$exists": False}}]}
+    following_rows = await _find_many("follows", {"follower_id": me, **accepted_status}, lambda row: row.get("follower_id") == me and row.get("status", "ACCEPTED") == "ACCEPTED", sort_key="created_at", reverse=True, limit=200)
+    follower_rows = await _find_many("follows", {"following_id": me, **accepted_status}, lambda row: row.get("following_id") == me and row.get("status", "ACCEPTED") == "ACCEPTED", sort_key="created_at", reverse=True, limit=200)
     following, followers = [], []
     for row in following_rows:
         user = await _get_user(row["following_id"])
@@ -392,7 +530,7 @@ async def list_conversations(current_user: dict = Depends(get_current_user)):
         unread = await _count("messages", {"conversation_id": row["id"], "recipient_id": me, "is_read": False}, lambda message: message.get("conversation_id") == row["id"] and message.get("recipient_id") == me and not message.get("is_read", False))
         result.append({
             "id": row["id"],
-            "other_user": _public_user(other),
+            "other_user": (await _profile(other, me)).model_dump(),
             "last_message": row.get("last_message"),
             "last_message_at": row.get("last_message_at"),
             "unread_count": unread,
@@ -445,7 +583,7 @@ async def get_conversation(conversation_id: str, current_user: dict = Depends(ge
     other = await _get_user(other_id)
     return {
         "id": conversation_id,
-        "other_user": _public_user(other) if other else None,
+        "other_user": (await _profile(other, me)).model_dump() if other else None,
         "messages": [MessageResponse(**row) for row in rows],
     }
 
@@ -501,16 +639,48 @@ async def global_search(request: Request, q: str = Query(..., min_length=2, max_
     if len(query) < 2:
         return {"users": [], "posts": []}
     escaped = re.escape(query)
+    visible_profiles = await visible_author_ids(current_user["id"])
     users = await _find_many(
         "users",
-        {"is_active": {"$ne": False}, "$or": [{"username": {"$regex": escaped, "$options": "i"}}, {"full_name": {"$regex": escaped, "$options": "i"}}, {"headline": {"$regex": escaped, "$options": "i"}}]},
-        lambda row: row.get("is_active", True) and any(query.lower() in str(row.get(field) or "").lower() for field in ("username", "full_name", "headline")),
+        {"is_active": {"$ne": False}, "$or": [
+            {"username": {"$regex": escaped, "$options": "i"}},
+            {"full_name": {"$regex": escaped, "$options": "i"}},
+            {"$and": [{"is_private": {"$ne": True}}, {"headline": {"$regex": escaped, "$options": "i"}}]},
+            {"$and": [{"is_private": True}, {"id": {"$in": list(visible_profiles)}}, {"headline": {"$regex": escaped, "$options": "i"}}]},
+        ]},
+        lambda row: row.get("is_active", True) and (
+            query.lower() in str(row.get("username") or "").lower()
+            or query.lower() in str(row.get("full_name") or "").lower()
+            or (
+                row.get("id") in visible_profiles
+                and query.lower() in str(row.get("headline") or "").lower()
+            )
+        ),
         sort_key="username", limit=10,
     )
+    searchable_author_ids = await visible_author_ids(current_user["id"])
+    post_search_query = {
+        "author_id": {"$in": list(searchable_author_ids)},
+        "moderation_status": "APPROVED",
+        "$or": [
+            {"content": {"$regex": escaped, "$options": "i"}},
+            {"event.title": {"$regex": escaped, "$options": "i"}},
+            {"article.title": {"$regex": escaped, "$options": "i"}},
+        ],
+    }
     if db_manager.use_mongo and db_manager.db is not None:
-        posts = await db_manager.db["posts"].find({"moderation_status": "APPROVED", "content": {"$regex": escaped, "$options": "i"}}).sort("created_at", -1).limit(10).to_list(length=10)
+        posts = await db_manager.db["posts"].find(post_search_query).sort("created_at", -1).limit(10).to_list(length=10) if searchable_author_ids else []
     else:
-        posts = [row for row in db_manager._collections["posts"] if row.get("moderation_status") == "APPROVED" and query.lower() in row.get("content", "").lower()]
+        posts = [
+            row for row in db_manager._collections["posts"]
+            if row.get("author_id") in searchable_author_ids
+            and row.get("moderation_status") == "APPROVED"
+            and (
+                query.lower() in str(row.get("content") or "").lower()
+                or query.lower() in str((row.get("event") or {}).get("title") or "").lower()
+                or query.lower() in str((row.get("article") or {}).get("title") or "").lower()
+            )
+        ]
         posts.sort(key=lambda row: row.get("created_at", ""), reverse=True)
         posts = posts[:10]
     post_ids = [post.get("id") for post in posts]

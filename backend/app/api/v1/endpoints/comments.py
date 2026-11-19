@@ -16,6 +16,7 @@ from app.services.audit_logger import audit_logger
 from app.core.database import db_manager
 from app.middleware.rate_limit import rate_limit_check
 from app.services.notifications import create_notification
+from app.services.social_access import can_view_post
 
 router = APIRouter()
 
@@ -45,6 +46,26 @@ async def create_comment(
         ), None)
     if not parent_post:
         raise HTTPException(status_code=404, detail="Approved post not found.")
+    if not await can_view_post(parent_post, current_user["id"]):
+        raise HTTPException(status_code=404, detail="Approved post not found.")
+
+    parent_comment = None
+    if comment_in.parent_comment_id:
+        if db_manager.use_mongo and db_manager.db is not None:
+            parent_comment = await db_manager.db["comments"].find_one({
+                "id": comment_in.parent_comment_id,
+                "post_id": comment_in.post_id,
+                "moderation_status": "APPROVED",
+            })
+        else:
+            parent_comment = next((
+                item for item in db_manager._collections.get("comments", [])
+                if item.get("id") == comment_in.parent_comment_id
+                and item.get("post_id") == comment_in.post_id
+                and item.get("moderation_status") == "APPROVED"
+            ), None)
+        if not parent_comment:
+            raise HTTPException(status_code=404, detail="Approved parent comment not found.")
 
     # Preprocess & Lang Detect
     preproc = TextPreprocessor.process(sanitized_content)
@@ -64,9 +85,11 @@ async def create_comment(
     comment_doc = {
         "id": comment_id,
         "post_id": comment_in.post_id,
+        "parent_comment_id": comment_in.parent_comment_id,
         "author_id": current_user["id"],
         "author_username": current_user["username"],
         "author_full_name": current_user.get("full_name"),
+        "author_avatar_url": current_user.get("avatar_url"),
         "content": sanitized_content,
         "language": lang["code"],
         "language_supported": lang["is_supported"],
@@ -127,9 +150,10 @@ async def create_comment(
 
     if mod_status == "APPROVED":
         await create_notification(
-            recipient_id=parent_post.get("author_id"), kind="COMMENT",
+            recipient_id=(parent_comment or parent_post).get("author_id"), kind="COMMENT",
             actor_id=current_user["id"], actor_username=current_user["username"],
-            resource_type="post", resource_id=comment_in.post_id,
+            resource_type="comment" if parent_comment else "post",
+            resource_id=comment_in.parent_comment_id or comment_in.post_id,
         )
     else:
         await create_notification(
@@ -145,6 +169,15 @@ async def list_comments_for_post(
     current_user: dict | None = Depends(get_optional_current_user),
 ):
     """Fetch approved comments for a specific post."""
+    if db_manager.use_mongo and db_manager.db is not None:
+        post = await db_manager.db["posts"].find_one({"id": post_id, "moderation_status": "APPROVED"})
+    else:
+        post = next((
+            row for row in db_manager._collections.get("posts", [])
+            if row.get("id") == post_id and row.get("moderation_status") == "APPROVED"
+        ), None)
+    if not post or not await can_view_post(post, current_user.get("id") if current_user else None):
+        raise HTTPException(status_code=404, detail="Approved post not found.")
     if db_manager.use_mongo and db_manager.db is not None:
         cursor = db_manager.db["comments"].find({
             "post_id": post_id,
@@ -199,6 +232,12 @@ async def like_comment(
         comment = next((item for item in db_manager._collections.get("comments", []) if item.get("id") == comment_id and item.get("moderation_status") == "APPROVED"), None)
     if not comment:
         raise HTTPException(status_code=404, detail="Approved comment not found.")
+    if db_manager.use_mongo and db_manager.db is not None:
+        post = await db_manager.db["posts"].find_one({"id": comment["post_id"], "moderation_status": "APPROVED"})
+    else:
+        post = next((row for row in db_manager._collections.get("posts", []) if row.get("id") == comment.get("post_id") and row.get("moderation_status") == "APPROVED"), None)
+    if not post or not await can_view_post(post, current_user["id"]):
+        raise HTTPException(status_code=404, detail="Approved comment not found.")
 
     now = datetime.now(timezone.utc).isoformat()
     like = {"id": str(uuid.uuid4()), "comment_id": comment_id, "user_id": current_user["id"], "created_at": now}
@@ -228,6 +267,14 @@ async def like_comment(
 @router.delete("/{comment_id}/like")
 async def unlike_comment(comment_id: str, current_user: dict = Depends(get_current_user)):
     if db_manager.use_mongo and db_manager.db is not None:
+        comment = await db_manager.db["comments"].find_one({"id": comment_id, "moderation_status": "APPROVED"})
+        post = await db_manager.db["posts"].find_one({"id": comment.get("post_id"), "moderation_status": "APPROVED"}) if comment else None
+    else:
+        comment = next((row for row in db_manager._collections.get("comments", []) if row.get("id") == comment_id and row.get("moderation_status") == "APPROVED"), None)
+        post = next((row for row in db_manager._collections.get("posts", []) if comment and row.get("id") == comment.get("post_id") and row.get("moderation_status") == "APPROVED"), None)
+    if not comment or not post or not await can_view_post(post, current_user["id"]):
+        raise HTTPException(status_code=404, detail="Approved comment not found.")
+    if db_manager.use_mongo and db_manager.db is not None:
         await db_manager.db["comment_likes"].delete_one({"comment_id": comment_id, "user_id": current_user["id"]})
         like_count = await db_manager.db["comment_likes"].count_documents({"comment_id": comment_id})
     else:
@@ -253,9 +300,16 @@ async def delete_comment(comment_id: str, request: Request, current_user: dict =
         raise HTTPException(status_code=403, detail="You can delete only your own comments.")
     if db_manager.use_mongo and db_manager.db is not None:
         await db_manager.db["comments"].delete_one({"id": comment_id, "author_id": current_user["id"]})
+        await db_manager.db["comments"].update_many(
+            {"post_id": comment["post_id"], "parent_comment_id": comment_id},
+            {"$set": {"parent_comment_id": comment.get("parent_comment_id")}},
+        )
         await db_manager.db["comment_likes"].delete_many({"comment_id": comment_id})
         await db_manager.db["moderation_logs"].delete_many({"content_id": comment_id})
     else:
+        for reply in db_manager._collections["comments"]:
+            if reply.get("parent_comment_id") == comment_id:
+                reply["parent_comment_id"] = comment.get("parent_comment_id")
         db_manager._collections["comments"] = [row for row in db_manager._collections["comments"] if row.get("id") != comment_id]
         db_manager._collections["comment_likes"] = [row for row in db_manager._collections["comment_likes"] if row.get("comment_id") != comment_id]
         db_manager._collections["moderation_logs"] = [row for row in db_manager._collections["moderation_logs"] if row.get("content_id") != comment_id]

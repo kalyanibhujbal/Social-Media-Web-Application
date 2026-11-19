@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from 'react';
-import { Sparkles, X, Info, CircleHelp } from 'lucide-react';
+import { Sparkles, X, Info } from 'lucide-react';
 
 const formatPercent = (value) => `${Math.round(Math.max(0, Math.min(1, value)) * 100)}%`;
 
@@ -8,8 +8,15 @@ export const ExplanationModal = ({ post, onClose }) => {
   const closeRef = useRef(null);
   const prediction = post?.ai_prediction;
   const explanation = prediction?.explanation;
-  const probabilities = prediction?.probabilities && typeof prediction.probabilities === 'object' ? prediction.probabilities : null;
+  const probabilityEntries = prediction?.probabilities && typeof prediction.probabilities === 'object'
+    ? Object.entries(prediction.probabilities).filter(([, value]) => typeof value === 'number' && Number.isFinite(value))
+    : [];
   const topWords = Array.isArray(explanation?.top_words) ? explanation.top_words : [];
+  const metadata = [
+    ['Model', prediction?.model_name],
+    ['Version', prediction?.model_version],
+    ['Analyzed', prediction?.inference_timestamp ? new Date(prediction.inference_timestamp).toLocaleString() : ''],
+  ].filter(([, value]) => value);
 
   useEffect(() => {
     const previousFocus = document.activeElement;
@@ -43,44 +50,40 @@ export const ExplanationModal = ({ post, onClose }) => {
         </header>
 
         <div className="explanation-summary">
-          <div><span className="field-label">AI prediction</span><strong>{prediction?.label || prediction?.predicted_class || 'Not available'}</strong></div>
-          <div><span className="field-label">Confidence</span><strong>{typeof prediction?.confidence === 'number' ? `${formatPercent(prediction.confidence)}${prediction.confidence_level ? ` · ${prediction.confidence_level.toLowerCase()}` : ''}` : 'Not returned'}</strong></div>
-          <div><span className="field-label">Content status</span><strong>{post.moderation_status?.replaceAll('_', ' ') || 'Not returned'}</strong></div>
+          {(prediction?.label || prediction?.predicted_class) && <div><span className="field-label">Prediction</span><strong>{prediction.label || prediction.predicted_class}</strong></div>}
+          {typeof prediction?.confidence === 'number' && <div><span className="field-label">Confidence</span><strong>{`${formatPercent(prediction.confidence)}${prediction.confidence_level ? ` · ${prediction.confidence_level.toLowerCase()}` : ''}`}</strong></div>}
+          {post.moderation_status && <div><span className="field-label">Content status</span><strong>{post.moderation_status.replaceAll('_', ' ')}</strong></div>}
         </div>
 
         {prediction?.confidence_level === 'LOW' && <div className="notice-card notice-card-warning"><Info size={17} aria-hidden="true" /> AI confidence is low. Treat this prediction cautiously; a human review may be appropriate.</div>}
 
-        <section className="explanation-block">
+        {post.content?.trim() && <section className="explanation-block">
           <h3>Content reviewed</h3>
-          <blockquote>{post.content || 'Content was not included in this response.'}</blockquote>
-        </section>
+          <blockquote>{post.content}</blockquote>
+        </section>}
 
-        {probabilities ? <section className="explanation-block">
+        {probabilityEntries.length > 0 && <section className="explanation-block">
           <h3>Class scores returned by the model</h3>
-          <div className="probability-list">{Object.entries(probabilities).map(([category, rawValue]) => {
+          <div className="probability-list">{probabilityEntries.map(([category, rawValue]) => {
             const value = Number(rawValue);
-            if (!Number.isFinite(value)) return null;
             const percent = Math.max(0, Math.min(value, 1)) * 100;
             return <div className="probability-row" key={category}>
               <div><span>{category}</span><strong>{formatPercent(value)}</strong></div>
               <div className="probability-track" aria-hidden="true"><span style={{ width: `${percent}%` }} /></div>
             </div>;
           })}</div>
-        </section> : <section className="explanation-block"><h3>Class scores</h3><p className="muted-note">The backend did not return per-class scores for this content.</p></section>}
+        </section>}
 
-        <section className="explanation-block">
+        {topWords.length > 0 && <section className="explanation-block">
           <h3>Rule indicators</h3>
           {explanation?.method && <p className="muted-note">Method returned: {explanation.method}</p>}
-          {topWords.length ? <div className="rule-indicator-list">{topWords.map((item, index) => <span className="rule-indicator" key={`${item.word}-${index}`}><strong>{item.word}</strong><span>{item.matched_rule || 'Keyword rule'}</span></span>)}</div> : <p className="muted-note">No rule indicators were returned for this content.</p>}
+          <div className="rule-indicator-list">{topWords.map((item, index) => <span className="rule-indicator" key={`${item.word}-${index}`}><strong>{item.word}</strong><span>{item.matched_rule || 'Keyword rule'}</span></span>)}</div>
           <p className="explanation-caveat"><Info size={16} aria-hidden="true" /> These are rule-based keyword indicators, not a causal explanation of the model’s decision.</p>
-        </section>
+        </section>}
 
-        <section className="model-metadata">
-          <div><span>Model</span><strong>{prediction?.model_name || 'Not returned'}</strong></div>
-          <div><span>Version</span><strong>{prediction?.model_version || 'Not returned'}</strong></div>
-          <div><span>Analyzed</span><strong>{prediction?.inference_timestamp ? new Date(prediction.inference_timestamp).toLocaleString() : 'Not returned'}</strong></div>
-        </section>
-        <p className="modal-disclaimer"><CircleHelp size={16} aria-hidden="true" /> Automated results can be wrong or incomplete. They are not legal determinations. Use the appeal option to request human review where available.</p>
+        {metadata.length > 0 && <section className="model-metadata">
+          {metadata.map(([label, value]) => <div key={label}><span>{label}</span><strong>{value}</strong></div>)}
+        </section>}
       </section>
     </div>
   );

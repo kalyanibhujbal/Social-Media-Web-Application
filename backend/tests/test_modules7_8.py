@@ -414,6 +414,7 @@ class TestModules7And8DashboardAdmin(unittest.TestCase):
         self.assertEqual(dashboard["stats"]["pending_review_posts"], 1)
 
     def test_public_post_feed_never_exposes_unapproved_statuses(self):
+        _seed_user("feed-author", "USER", "author")
         _seed_post("feed-author", "author", status="BLOCKED", label="Hate Speech")
         approved = _seed_post("feed-author", "author", status="APPROVED", label="Normal")
         self.assertEqual(client.get("/api/v1/posts?status_filter=BLOCKED").status_code, 400)

@@ -49,6 +49,7 @@ async def register(user_in: UserRegister, request: Request):
         "role": "USER",  # Backend enforced, never trust role from request
         "terms_accepted": True,
         "is_active": True,
+        "is_private": False,
         "created_at": datetime.now(timezone.utc).isoformat()
     }
 
@@ -152,10 +153,14 @@ async def update_profile(
             updates[field] = cleaned or None
     if profile.skills is not None:
         updates["skills"] = [skill.strip() for skill in profile.skills]
+    if profile.is_private is not None:
+        updates["is_private"] = profile.is_private
     if not updates:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Provide a username or email to update.")
 
     for field, value in updates.items():
+        if field not in {"username", "email"}:
+            continue
         query = {field: value, "id": {"$ne": current_user["id"]}}
         if db_manager.use_mongo and db_manager.db is not None:
             duplicate = await db_manager.db["users"].find_one(query)
@@ -171,6 +176,17 @@ async def update_profile(
         await db_manager.db["users"].update_one({"id": current_user["id"]}, {"$set": updates})
     else:
         current_user.update(updates)
+
+    if updates.get("is_private") is False:
+        if db_manager.use_mongo and db_manager.db is not None:
+            await db_manager.db["follows"].update_many(
+                {"following_id": current_user["id"], "status": "PENDING"},
+                {"$set": {"status": "ACCEPTED", "updated_at": datetime.now(timezone.utc).isoformat()}},
+            )
+        else:
+            for follow in db_manager._collections.get("follows", []):
+                if follow.get("following_id") == current_user["id"] and follow.get("status") == "PENDING":
+                    follow.update({"status": "ACCEPTED", "updated_at": datetime.now(timezone.utc).isoformat()})
 
     await audit_logger.log_event(
         actor_id=current_user["id"],

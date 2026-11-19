@@ -1,6 +1,6 @@
 import React, { useContext } from 'react';
 import { AuthContext } from '../../context/AuthContext';
-import { Home, Users, Plus, Bell, UserRound } from 'lucide-react';
+import { Home, Compass, Users, Plus, Bell, UserRound } from 'lucide-react';
 
 export const MobileNavigation = ({ activePage, setActivePage }) => {
   const { user } = useContext(AuthContext);
@@ -17,6 +17,7 @@ export const MobileNavigation = ({ activePage, setActivePage }) => {
 
   const links = [
     { key: 'home', label: 'Home', Icon: Home, onClick: () => setActivePage('home') },
+    { key: 'explore', label: 'Explore', Icon: Compass, onClick: () => setActivePage('explore') },
     { key: 'network', label: 'Network', Icon: Users, onClick: () => setActivePage('network') },
     { key: 'create', label: user ? 'Create' : 'Sign in', Icon: Plus, onClick: createPost },
     { key: 'notifications', label: 'Alerts', Icon: Bell, onClick: () => setActivePage('notifications') },

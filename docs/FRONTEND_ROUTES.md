@@ -4,20 +4,24 @@ The application switches views using internal page keys; it does not define brow
 
 | Page key | Page | Access level | Description |
 |---|---|---|---|
-| home | Home and approved feed | Public | View/search approved posts, use the non-persisting moderation sandbox, and create text posts while signed in. Search filters the public posts returned by the existing endpoint. |
-| network | My network | Public | Layout preview with fictional sample profiles. The backend does not provide connection or invitation endpoints, so those controls are disabled and no network actions are simulated. |
+| home | Home and approved feed | Public | View/search approved posts, use the non-persisting moderation sandbox, and create text, image, video, event, or article content while signed in. |
+| explore | Explore | Public | Discover approved posts from public accounts and open creator profiles; private-account posts are excluded by the backend. |
+| events | Events | Public | Browse approved event posts and open/interact with event cards. |
+| articles | Articles | Public | Browse approved article posts and open the reading view. |
+| article-reader | Article reading/editing | Public; editing is owner-only | Read an article and use the shared like/comment controls; authors can edit or delete their own article. |
+| network | My network | Signed-in account | Review connection invitations, accepted connections, private-account follow requests, and member suggestions. |
 | notifications | Notifications | Public | Empty state. The backend does not provide a notifications endpoint; personal moderation results remain available in the signed-in dashboard. |
 | messages | Messages | Public | Messaging layout preview. The backend does not provide conversation or message endpoints; compose controls are disabled. |
 | login, register | Sign-in and account creation | Public | Authenticate or create an account. |
-| profile | Profile | Signed-in account | Display the current user's backend account fields and own posts. Headline, location, experience, education, skills, and profile photo are not exposed by the current API. |
+| profile | Profile | Public with private-account restrictions | View public profiles and approved posts. Private profile details and posts require owner access or approved-follow status. |
 | dashboard | User dashboard | Signed-in account | View the current user's own posts, comments, predictions, confidence, review state, and history. |
 | admin | Admin dashboard | Administrator; API authorization enforced by backend | Review content, inspect minimized audit/user records, and view database-backed summaries, model metadata, available evaluation output, and reports. |
-| account-settings | Account settings | Signed-in account | Correct username/email after password confirmation and manage account deletion. |
+| account-settings | Account settings | Signed-in account | Correct profile details, change public/private visibility after password confirmation, export data, and manage account deletion. |
 | privacy-policy, terms, cookies-policy, refund-policy, consent, data-rights, grievance, ai-transparency, accessibility, copyright | Legal and privacy information | Public, except account data/request controls require sign-in | Privacy notice, user rights, preferences, grievances, moderation limitations, accessibility statement, and project notices. |
 
 ## Navigation and responsive layout
 
-Navigation is managed with internal page keys rather than browser URL routes. The desktop header includes feed search, and the mobile layout provides a compact top bar and fixed bottom navigation. Search is local filtering over approved feed results; user-directory search is not available in the API.
+Navigation is managed with internal page keys rather than browser URL routes. The desktop header includes Home, Explore, Events, Articles, Network, notifications, and messaging; the mobile layout provides a compact top bar and fixed bottom navigation. Private-account follow approvals are managed in My Network.
 
 ## Accessibility practices and verification status
 

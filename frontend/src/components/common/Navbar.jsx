@@ -3,12 +3,16 @@ import { AuthContext } from '../../context/AuthContext';
 import { OpenVibeLogo } from './OpenVibeLogo';
 import { api } from '../../services/api';
 import {
-  Home, Users, Bell, MessageSquare, BarChart3, ShieldCheck,
+  Home, Compass, Users, Bell, MessageSquare, BarChart3, ShieldCheck,
+  CalendarDays, BookOpen,
   UserRound, Settings, LogOut, Search, ChevronDown, X, Bookmark,
 } from 'lucide-react';
 
 const PRIMARY_LINKS = [
   { key: 'home', label: 'Home', Icon: Home },
+  { key: 'explore', label: 'Explore', Icon: Compass },
+  { key: 'events', label: 'Events', Icon: CalendarDays },
+  { key: 'articles', label: 'Articles', Icon: BookOpen },
   { key: 'network', label: 'Network', Icon: Users },
   { key: 'notifications', label: 'Alerts', Icon: Bell },
   { key: 'messages', label: 'Messages', Icon: MessageSquare },
@@ -119,9 +123,9 @@ export const Navbar = ({ activePage, setActivePage, searchQuery = '', onSearch, 
               <li key={key} className="nav-item">
                 <button
                   type="button"
-                  className={`nav-tab ${activePage === key ? 'active' : ''}`}
+                  className={`nav-tab ${activePage === key || (key === 'articles' && activePage === 'article') ? 'active' : ''}`}
                   onClick={() => go(key)}
-                  aria-current={activePage === key ? 'page' : undefined}
+                  aria-current={activePage === key || (key === 'articles' && activePage === 'article') ? 'page' : undefined}
                   aria-label={key === 'notifications' && unreadCount > 0 ? `${label}, ${unreadCount} unread` : label}
                   title={key === 'messages' ? 'Messaging preview' : undefined}
                 >

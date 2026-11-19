@@ -71,7 +71,8 @@ class TestMongoContentSerialization(unittest.IsolatedAsyncioTestCase):
         })
         comments = MockCollection()
         logs = MockCollection()
-        database = {"posts": posts, "comments": comments, "moderation_logs": logs}
+        users = MockCollection(find_one_result={"id": "author-1", "is_private": False, "is_active": True})
+        database = {"posts": posts, "comments": comments, "moderation_logs": logs, "users": users}
         request = SimpleNamespace(client=SimpleNamespace(host="127.0.0.1"))
 
         with (
